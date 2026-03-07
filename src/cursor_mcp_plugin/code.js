@@ -4054,27 +4054,30 @@ async function setReactions(params) {
         const action = { type: a.type || "NODE" };
         if (a.destinationId) action.destinationId = a.destinationId;
         if (a.navigation) action.navigation = a.navigation;
-        if (a.transition) {
-          action.transition = {
+        if (a.transition !== undefined) {
+          action.transition = a.transition === null ? null : {
             type: a.transition.type || "DISSOLVE",
             easing: a.transition.easing || { type: "EASE_IN_AND_OUT" },
             duration: a.transition.duration !== undefined ? a.transition.duration : 0.3
           };
+        } else {
+          action.transition = null;
         }
         if (a.url) action.url = a.url;
         return action;
       });
     } else if (r.destinationId) {
       // Shorthand: just provide destinationId at top level
+      const t = r.transition;
       reaction.actions = [{
         type: "NODE",
         destinationId: r.destinationId,
         navigation: r.navigation || "NAVIGATE",
-        transition: r.transition || {
-          type: "DISSOLVE",
-          easing: { type: "EASE_IN_AND_OUT" },
-          duration: 0.3
-        }
+        transition: t ? {
+          type: t.type || "DISSOLVE",
+          easing: t.easing || { type: "EASE_IN_AND_OUT" },
+          duration: t.duration !== undefined ? t.duration : 0.3
+        } : null
       }];
     }
 
