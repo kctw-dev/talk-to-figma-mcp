@@ -93,6 +93,9 @@ const serverArg = args.find(arg => arg.startsWith('--server='));
 const serverUrl = serverArg ? serverArg.split('=')[1] : 'localhost';
 const WS_URL = serverUrl === 'localhost' ? `ws://${serverUrl}` : `wss://${serverUrl}`;
 
+// Channel name from env var (each project sets its own in .mcp.json)
+const MCP_CHANNEL = process.env.MCP_CHANNEL || 'default';
+
 // Document Info Tool
 server.tool(
   "get_document_info",
@@ -2896,10 +2899,10 @@ function connectToFigma(port: number = 3055) {
 
       // After auth success, auto-join channel
       if (json.type === 'system' && json.message === 'Authenticated. Please join a channel to start.') {
-        logger.info('Authenticated! Auto-joining channel: kagemusha');
-        const joinMsg = JSON.stringify({ type: "join", channel: "kagemusha" });
+        logger.info(`Authenticated! Auto-joining channel: ${MCP_CHANNEL}`);
+        const joinMsg = JSON.stringify({ type: "join", channel: MCP_CHANNEL });
         ws!.send(joinMsg);
-        currentChannel = "kagemusha";
+        currentChannel = MCP_CHANNEL;
         return;
       }
 

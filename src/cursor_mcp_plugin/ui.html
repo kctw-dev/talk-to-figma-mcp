@@ -285,6 +285,13 @@
               min="1024"
               max="65535"
             />
+            <label for="channel" style="margin-top:8px">Channel (Project Name)</label>
+            <input
+              type="text"
+              id="channel"
+              placeholder="my-project"
+              value=""
+            />
           </div>
         </div>
 
@@ -678,8 +685,9 @@
 
       // Add this function after the generateId() function
       function generateChannelName() {
-        // Fixed channel name — no manual exchange needed
-        return "kagemusha";
+        // Read from UI input, fall back to stored value or "default"
+        const input = document.getElementById("channel");
+        return (input && input.value.trim()) || "default";
       }
 
       // ECDSA P-256 Private Key for transport auth

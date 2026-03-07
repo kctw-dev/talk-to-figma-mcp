@@ -27,6 +27,7 @@ var import_mcp = require("@modelcontextprotocol/sdk/server/mcp.js");
 var import_stdio = require("@modelcontextprotocol/sdk/server/stdio.js");
 var import_zod = require("zod");
 var import_ws = __toESM(require("ws"), 1);
+var import_crypto = require("crypto");
 var import_uuid = require("uuid");
 var logger = {
   info: (message) => process.stderr.write(`[INFO] ${message}
@@ -43,6 +44,11 @@ var logger = {
 var ws = null;
 var pendingRequests = /* @__PURE__ */ new Map();
 var currentChannel = null;
+var AUTH_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsUYDxrViBFIaMQ8x
+v2OXZmO1Wdhgp2vc42YvFiRAclyhRANCAAQZpk/Z1Zjrv8hX2iD+mHZQOFC9xpm6
+HYP6NAC4jykHnqYL11YVy6w9g96ce1JpYvq71UtWI58ayAm9moxoIQob
+-----END PRIVATE KEY-----`;
 var server = new import_mcp.McpServer({
   name: "TalkToFigmaMCP",
   version: "1.0.0"
@@ -51,6 +57,7 @@ var args = process.argv.slice(2);
 var serverArg = args.find((arg) => arg.startsWith("--server="));
 var serverUrl = serverArg ? serverArg.split("=")[1] : "localhost";
 var WS_URL = serverUrl === "localhost" ? `ws://${serverUrl}` : `wss://${serverUrl}`;
+var MCP_CHANNEL = process.env.MCP_CHANNEL || "default";
 server.tool(
   "get_document_info",
   "Get detailed information about the current Figma document",
@@ -2231,12 +2238,32 @@ function connectToFigma(port = 3055) {
   logger.info(`Connecting to Figma socket server at ${wsUrl}...`);
   ws = new import_ws.default(wsUrl);
   ws.on("open", () => {
-    logger.info("Connected to Figma socket server");
+    logger.info("Connected to Figma socket server \u2014 waiting for auth challenge");
     currentChannel = null;
   });
   ws.on("message", (data) => {
     try {
       const json = JSON.parse(data);
+      if (json.type === "auth_challenge" && json.nonce) {
+        logger.info("Received auth challenge \u2014 signing nonce");
+        const signature = (0, import_crypto.sign)("SHA256", Buffer.from(json.nonce), {
+          key: AUTH_PRIVATE_KEY,
+          dsaEncoding: "ieee-p1363"
+        });
+        ws.send(JSON.stringify({
+          type: "auth_response",
+          signature: signature.toString("base64")
+        }));
+        logger.info("Sent auth response");
+        return;
+      }
+      if (json.type === "system" && json.message === "Authenticated. Please join a channel to start.") {
+        logger.info(`Authenticated! Auto-joining channel: ${MCP_CHANNEL}`);
+        const joinMsg = JSON.stringify({ type: "join", channel: MCP_CHANNEL });
+        ws.send(joinMsg);
+        currentChannel = MCP_CHANNEL;
+        return;
+      }
       if (json.type === "progress_update") {
         const progressData = json.message.data;
         const requestId = json.id || "";
