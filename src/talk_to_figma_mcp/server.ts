@@ -2856,8 +2856,13 @@ function connectToFigma(port: number = 3055) {
 
   ws.on('open', () => {
     logger.info('Connected to Figma socket server');
-    // Reset channel on new connection
+    // Auto-join fixed channel — no manual exchange needed
     currentChannel = null;
+    const autoChannel = "kagemusha";
+    const joinMsg = JSON.stringify({ type: "join", channel: autoChannel });
+    ws!.send(joinMsg);
+    currentChannel = autoChannel;
+    logger.info(`Auto-joined channel: ${autoChannel}`);
   });
 
   ws.on("message", (data: any) => {
