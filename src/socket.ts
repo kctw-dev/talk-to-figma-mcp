@@ -1,41 +1,42 @@
 #!/usr/bin/env bun
 
 import { Server, ServerWebSocket } from "bun";
+import { randomBytes, verify as cryptoVerify } from 'crypto';
+
+// ECDSA P-256 Public Key for client authentication
+const AUTH_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGaZP2dWY67/IV9og/ph2UDhQvcaZ
+uh2D+jQAuI8pB56mC9dWFcusPYPenHtSaWL6u9VLViOfGsgJvZqMaCEKGw==
+-----END PUBLIC KEY-----`;
+
+// Track authenticated clients and pending auth challenges
+const authenticatedClients = new WeakSet<ServerWebSocket<any>>();
+const pendingAuth = new Map<ServerWebSocket<any>, string>(); // ws -> nonce
 
 // Store clients by channel
 const channels = new Map<string, Set<ServerWebSocket<any>>>();
 
 function handleConnection(ws: ServerWebSocket<any>) {
-  // Don't add to clients immediately - wait for channel join
-  console.log("New client connected");
+  console.log("New client connected — sending auth challenge");
 
-  // Send welcome message to the new client
+  // Generate random nonce for challenge
+  const nonce = randomBytes(32).toString('hex');
+  pendingAuth.set(ws, nonce);
+
+  // Send auth challenge
   ws.send(JSON.stringify({
-    type: "system",
-    message: "Please join a channel to start chatting",
+    type: "auth_challenge",
+    nonce: nonce,
   }));
 
-  ws.close = () => {
-    console.log("Client disconnected");
-
-    // Remove client from their channel
-    channels.forEach((clients, channelName) => {
-      if (clients.has(ws)) {
-        clients.delete(ws);
-
-        // Notify other clients in same channel
-        clients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({
-              type: "system",
-              message: "A user has left the channel",
-              channel: channelName
-            }));
-          }
-        });
-      }
-    });
-  };
+  // Auto-disconnect if not authenticated within 10 seconds
+  setTimeout(() => {
+    if (pendingAuth.has(ws)) {
+      console.log("Auth timeout — disconnecting client");
+      pendingAuth.delete(ws);
+      ws.close();
+    }
+  }, 10000);
 }
 
 const server = Bun.serve({
@@ -85,6 +86,55 @@ const server = Bun.serve({
           console.log(`Response: ID: ${data.id}, Has Result: ${!!data.message.result}`);
         }
         console.log(`Full message:`, JSON.stringify(data, null, 2));
+
+        // --- Auth gate (transport layer) ---
+        if (data.type === "auth_response") {
+          const nonce = pendingAuth.get(ws);
+          if (!nonce) {
+            console.log("✗ Unexpected auth_response — no pending challenge");
+            ws.close();
+            return;
+          }
+
+          try {
+            // Verify ECDSA signature (ieee-p1363 = raw r||s format, compatible with SubtleCrypto)
+            const isValid = cryptoVerify(
+              'SHA256',
+              Buffer.from(nonce),
+              { key: AUTH_PUBLIC_KEY, dsaEncoding: 'ieee-p1363' },
+              Buffer.from(data.signature, 'base64')
+            );
+
+            if (isValid) {
+              authenticatedClients.add(ws);
+              pendingAuth.delete(ws);
+              console.log("✓ Client authenticated successfully");
+              ws.send(JSON.stringify({
+                type: "system",
+                message: "Authenticated. Please join a channel to start.",
+              }));
+            } else {
+              console.log("✗ Invalid signature — disconnecting");
+              pendingAuth.delete(ws);
+              ws.close();
+            }
+          } catch (err) {
+            console.error("✗ Auth verification error:", err);
+            pendingAuth.delete(ws);
+            ws.close();
+          }
+          return;
+        }
+
+        // Reject unauthenticated clients
+        if (!authenticatedClients.has(ws)) {
+          ws.send(JSON.stringify({
+            type: "error",
+            message: "Not authenticated. Send auth_response first."
+          }));
+          return;
+        }
+        // --- End auth gate ---
 
         if (data.type === "join") {
           const channelName = data.channel;
@@ -185,6 +235,9 @@ const server = Bun.serve({
       }
     },
     close(ws: ServerWebSocket<any>) {
+      // Clean up auth state
+      authenticatedClients.delete(ws);
+      pendingAuth.delete(ws);
       // Remove client from their channel
       channels.forEach((clients) => {
         clients.delete(ws);

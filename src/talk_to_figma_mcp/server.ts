@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import WebSocket from "ws";
+import { sign as cryptoSign } from 'crypto';
 import { v4 as uuidv4 } from "uuid";
 
 // Define TypeScript interfaces for Figma responses
@@ -72,6 +73,13 @@ const pendingRequests = new Map<string, {
 
 // Track which channel each client is in
 let currentChannel: string | null = null;
+
+// ECDSA P-256 Private Key for transport auth
+const AUTH_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsUYDxrViBFIaMQ8x
+v2OXZmO1Wdhgp2vc42YvFiRAclyhRANCAAQZpk/Z1Zjrv8hX2iD+mHZQOFC9xpm6
+HYP6NAC4jykHnqYL11YVy6w9g96ce1JpYvq71UtWI58ayAm9moxoIQob
+-----END PRIVATE KEY-----`;
 
 // Create MCP server
 const server = new McpServer({
@@ -2855,14 +2863,8 @@ function connectToFigma(port: number = 3055) {
   ws = new WebSocket(wsUrl);
 
   ws.on('open', () => {
-    logger.info('Connected to Figma socket server');
-    // Auto-join fixed channel — no manual exchange needed
+    logger.info('Connected to Figma socket server — waiting for auth challenge');
     currentChannel = null;
-    const autoChannel = "kagemusha";
-    const joinMsg = JSON.stringify({ type: "join", channel: autoChannel });
-    ws!.send(joinMsg);
-    currentChannel = autoChannel;
-    logger.info(`Auto-joined channel: ${autoChannel}`);
   });
 
   ws.on("message", (data: any) => {
@@ -2876,6 +2878,30 @@ function connectToFigma(port: number = 3055) {
       }
 
       const json = JSON.parse(data) as ProgressMessage;
+
+      // Handle auth challenge from transport layer
+      if (json.type === 'auth_challenge' && json.nonce) {
+        logger.info('Received auth challenge — signing nonce');
+        const signature = cryptoSign('SHA256', Buffer.from(json.nonce as string), {
+          key: AUTH_PRIVATE_KEY,
+          dsaEncoding: 'ieee-p1363'
+        });
+        ws!.send(JSON.stringify({
+          type: 'auth_response',
+          signature: signature.toString('base64'),
+        }));
+        logger.info('Sent auth response');
+        return;
+      }
+
+      // After auth success, auto-join channel
+      if (json.type === 'system' && json.message === 'Authenticated. Please join a channel to start.') {
+        logger.info('Authenticated! Auto-joining channel: kagemusha');
+        const joinMsg = JSON.stringify({ type: "join", channel: "kagemusha" });
+        ws!.send(joinMsg);
+        currentChannel = "kagemusha";
+        return;
+      }
 
       // Handle progress updates
       if (json.type === 'progress_update') {

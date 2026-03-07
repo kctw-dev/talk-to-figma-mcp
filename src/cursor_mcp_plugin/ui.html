@@ -452,24 +452,40 @@
           state.socket = new WebSocket(wsUrl);
 
           state.socket.onopen = () => {
-            // Generate random channel name
-            const channelName = generateChannelName();
-            console.log("Joining channel:", channelName);
-            state.channel = channelName;
-
-            // Join the channel using the same format as App.tsx
-            state.socket.send(
-              JSON.stringify({
-                type: "join",
-                channel: channelName.trim(),
-              })
-            );
+            console.log("Connected to WebSocket — waiting for auth challenge");
           };
 
           state.socket.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data);
               console.log("Received message:", data);
+
+              // Handle auth challenge from transport layer
+              if (data.type === "auth_challenge" && data.nonce) {
+                console.log("Received auth challenge — signing nonce");
+                signNonce(data.nonce).then(signature => {
+                  state.socket.send(JSON.stringify({
+                    type: "auth_response",
+                    signature: signature,
+                  }));
+                  console.log("Sent auth response");
+                }).catch(err => {
+                  console.error("Auth signing failed:", err);
+                });
+                return;
+              }
+
+              // After auth success, auto-join channel
+              if (data.type === "system" && data.message === "Authenticated. Please join a channel to start.") {
+                const channelName = generateChannelName();
+                console.log("Authenticated! Joining channel:", channelName);
+                state.channel = channelName;
+                state.socket.send(JSON.stringify({
+                  type: "join",
+                  channel: channelName.trim(),
+                }));
+                return;
+              }
 
               if (data.type === "system") {
                 // Successfully joined channel
@@ -664,6 +680,28 @@
       function generateChannelName() {
         // Fixed channel name — no manual exchange needed
         return "kagemusha";
+      }
+
+      // ECDSA P-256 Private Key for transport auth
+      const AUTH_PRIVATE_KEY_B64 = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsUYDxrViBFIaMQ8xv2OXZmO1Wdhgp2vc42YvFiRAclyhRANCAAQZpk/Z1Zjrv8hX2iD+mHZQOFC9xpm6HYP6NAC4jykHnqYL11YVy6w9g96ce1JpYvq71UtWI58ayAm9moxoIQob";
+
+      async function signNonce(nonce) {
+        // Import PKCS8 private key
+        const keyData = Uint8Array.from(atob(AUTH_PRIVATE_KEY_B64), c => c.charCodeAt(0));
+        const key = await crypto.subtle.importKey(
+          "pkcs8", keyData.buffer,
+          { name: "ECDSA", namedCurve: "P-256" },
+          false, ["sign"]
+        );
+        // Sign nonce with ECDSA SHA-256 (produces raw r||s format)
+        const encoder = new TextEncoder();
+        const signature = await crypto.subtle.sign(
+          { name: "ECDSA", hash: "SHA-256" },
+          key,
+          encoder.encode(nonce)
+        );
+        // Convert to base64
+        return btoa(String.fromCharCode(...new Uint8Array(signature)));
       }
 
       // Tab switching
