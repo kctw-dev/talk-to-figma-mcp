@@ -1,6 +1,9 @@
 // This is the main code file for the Cursor MCP Figma plugin
 // It handles Figma API commands
 
+// Plugin version — used by MCP to verify plugin is up-to-date
+const PLUGIN_VERSION = "1.1.0";
+
 // Plugin state
 const state = {
   serverPort: 3055, // Default port
@@ -121,6 +124,8 @@ async function handleCommand(command, params) {
       return await getNodesInfo(params.nodeIds);
     case "read_my_design":
       return await readMyDesign();
+    case "get_plugin_version":
+      return { version: PLUGIN_VERSION };
     case "create_rectangle":
       return await createRectangle(params);
     case "create_frame":

@@ -96,6 +96,46 @@ const WS_URL = serverUrl === 'localhost' ? `ws://${serverUrl}` : `wss://${server
 // Channel name from env var (each project sets its own in .mcp.json)
 const MCP_CHANNEL = process.env.MCP_CHANNEL || 'default';
 
+// Plugin Version Check Tool
+const EXPECTED_PLUGIN_VERSION = "1.1.0";
+server.tool(
+  "get_plugin_version",
+  "Get the Figma plugin version to verify it is up-to-date",
+  {},
+  async () => {
+    try {
+      const result = await sendCommandToFigma("get_plugin_version") as any;
+      const version = result?.version || "unknown";
+      const isUpToDate = version === EXPECTED_PLUGIN_VERSION;
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            pluginVersion: version,
+            expectedVersion: EXPECTED_PLUGIN_VERSION,
+            isUpToDate,
+            message: isUpToDate
+              ? `Plugin is up-to-date (v${version})`
+              : `Plugin outdated! Running v${version}, expected v${EXPECTED_PLUGIN_VERSION}. Please update plugin files and reload in Figma.`
+          })
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            pluginVersion: "unknown",
+            expectedVersion: EXPECTED_PLUGIN_VERSION,
+            isUpToDate: false,
+            message: `Could not get plugin version: ${error instanceof Error ? error.message : String(error)}`
+          })
+        }]
+      };
+    }
+  }
+);
+
 // Document Info Tool
 server.tool(
   "get_document_info",
@@ -1210,14 +1250,18 @@ server.tool(
   "create_component_instance",
   "Create an instance of a component in Figma",
   {
-    componentKey: z.string().describe("Key of the component to instantiate"),
+    componentKey: z.string().optional().describe("Key of the component to instantiate (for published components)"),
+    componentId: z.string().optional().describe("Node ID of a local component to instantiate"),
+    parentId: z.string().optional().describe("Optional parent node ID to append the instance to"),
     x: z.number().describe("X position"),
     y: z.number().describe("Y position"),
   },
-  async ({ componentKey, x, y }: any) => {
+  async ({ componentKey, componentId, parentId, x, y }: any) => {
     try {
       const result = await sendCommandToFigma("create_component_instance", {
         componentKey,
+        componentId,
+        parentId,
         x,
         y,
       });
@@ -2620,6 +2664,7 @@ This detailed process ensures you correctly interpret the reaction data, prepare
 
 // Define command types and parameters
 type FigmaCommand =
+  | "get_plugin_version"
   | "get_document_info"
   | "get_selection"
   | "get_node_info"
