@@ -2648,7 +2648,10 @@ type FigmaCommand =
   | "set_default_connector"
   | "create_connections"
   | "set_focus"
-  | "set_selections";
+  | "set_selections"
+  | "set_reactions"
+  | "create_component_from_node"
+  | "create_variables";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -2797,7 +2800,18 @@ type CommandParams = {
   set_selections: {
     nodeIds: string[];
   };
-
+  set_reactions: {
+    nodeId: string;
+    reactions: any[];
+  };
+  create_component_from_node: {
+    nodeId: string;
+  };
+  create_variables: {
+    collectionName: string;
+    modes?: string[];
+    variables: any[];
+  };
 };
 
 
@@ -3028,6 +3042,153 @@ function sendCommandToFigma(
     ws.send(JSON.stringify(request));
   });
 }
+
+// Set Prototype Reactions Tool
+server.tool(
+  "set_reactions",
+  "Set prototype interactions (reactions) on a Figma node. Allows creating click-to-navigate, hover, and other prototype interactions.",
+  {
+    nodeId: z.string().describe("The ID of the node to set reactions on"),
+    reactions: z.array(z.object({
+      trigger: z.object({
+        type: z.enum(["ON_CLICK", "ON_HOVER", "ON_PRESS", "ON_DRAG", "MOUSE_ENTER", "MOUSE_LEAVE", "MOUSE_UP", "MOUSE_DOWN", "AFTER_TIMEOUT"]).default("ON_CLICK").describe("Trigger type"),
+        timeout: z.number().optional().describe("Timeout in seconds (for AFTER_TIMEOUT trigger)"),
+      }).optional().describe("Trigger for this reaction (defaults to ON_CLICK)"),
+      destinationId: z.string().optional().describe("Shorthand: destination node ID for simple navigation"),
+      navigation: z.enum(["NAVIGATE", "OVERLAY", "SWAP", "SCROLL_TO", "CHANGE_TO"]).optional().describe("Navigation type (default: NAVIGATE)"),
+      transition: z.object({
+        type: z.enum(["DISSOLVE", "SMART_ANIMATE", "MOVE_IN", "MOVE_OUT", "PUSH", "SLIDE_IN", "SLIDE_OUT"]).default("DISSOLVE"),
+        easing: z.object({
+          type: z.enum(["EASE_IN", "EASE_OUT", "EASE_IN_AND_OUT", "LINEAR", "EASE_IN_BACK", "EASE_OUT_BACK", "EASE_IN_AND_OUT_BACK"]).default("EASE_IN_AND_OUT"),
+        }).optional(),
+        duration: z.number().default(0.3).describe("Duration in seconds"),
+      }).optional().describe("Transition animation"),
+      actions: z.array(z.object({
+        type: z.enum(["NODE", "BACK", "CLOSE", "URL"]).describe("Action type"),
+        destinationId: z.string().optional().describe("Target node ID (for NODE action)"),
+        navigation: z.string().optional().describe("Navigation type"),
+        transition: z.any().optional().describe("Transition config"),
+        url: z.string().optional().describe("URL (for URL action)"),
+      })).optional().describe("Advanced: array of actions for this reaction"),
+    })).describe("Array of reactions to set on the node"),
+  },
+  async ({ nodeId, reactions }: any) => {
+    try {
+      const result = await sendCommandToFigma("set_reactions", {
+        nodeId,
+        reactions,
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting reactions: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Create Component from Node Tool
+server.tool(
+  "create_component_from_node",
+  "Convert an existing Figma frame/node into a reusable Component. The node cannot already be a component or be inside a component.",
+  {
+    nodeId: z.string().describe("The ID of the node to convert to a Component"),
+  },
+  async ({ nodeId }: any) => {
+    try {
+      const result = await sendCommandToFigma("create_component_from_node", {
+        nodeId,
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating component: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Create Variables Tool
+server.tool(
+  "create_variables",
+  "Create a Figma variable collection with variables. Supports COLOR, FLOAT, STRING, and BOOLEAN types with multiple modes (e.g., light/dark theme).",
+  {
+    collectionName: z.string().describe("Name for the variable collection"),
+    modes: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Mode names (e.g., ['Light', 'Dark']). First mode replaces the default mode."
+      ),
+    variables: z
+      .array(
+        z.object({
+          name: z.string().describe("Variable name (e.g., 'primary-color')"),
+          resolvedType: z
+            .enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"])
+            .default("COLOR")
+            .describe("Variable data type"),
+          values: z
+            .array(z.any())
+            .optional()
+            .describe(
+              "Values for each mode. For COLOR: {r,g,b,a} (0-1 range). For FLOAT: number. For STRING: string. For BOOLEAN: boolean."
+            ),
+        })
+      )
+      .describe("Array of variables to create"),
+  },
+  async ({ collectionName, modes, variables }: any) => {
+    try {
+      const result = await sendCommandToFigma("create_variables", {
+        collectionName,
+        modes,
+        variables,
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating variables: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
 
 // Update the join_channel tool
 server.tool(

@@ -233,6 +233,12 @@ async function handleCommand(command, params) {
       return await setFocus(params);
     case "set_selections":
       return await setSelections(params);
+    case "set_reactions":
+      return await setReactions(params);
+    case "create_component_from_node":
+      return await createComponentFromNode(params);
+    case "create_variables":
+      return await createVariables(params);
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -4024,5 +4030,141 @@ async function setSelections(params) {
     selectedNodes: selectedNodes,
     notFoundIds: notFoundIds,
     message: `Selected ${nodes.length} nodes${notFoundIds.length > 0 ? ` (${notFoundIds.length} not found)` : ''}`
+  };
+}
+
+async function setReactions(params) {
+  const { nodeId, reactions } = params || {};
+  if (!nodeId) throw new Error("Missing nodeId parameter");
+  if (!reactions || !Array.isArray(reactions)) throw new Error("Missing or invalid reactions parameter");
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found: ${nodeId}`);
+  if (!('reactions' in node)) throw new Error(`Node does not support reactions: ${nodeId}`);
+
+  // Build the reactions array for Figma API
+  const figmaReactions = reactions.map(r => {
+    const reaction = {
+      trigger: r.trigger || { type: "ON_CLICK" },
+      actions: []
+    };
+
+    if (r.actions && Array.isArray(r.actions)) {
+      reaction.actions = r.actions.map(a => {
+        const action = { type: a.type || "NODE" };
+        if (a.destinationId) action.destinationId = a.destinationId;
+        if (a.navigation) action.navigation = a.navigation;
+        if (a.transition) {
+          action.transition = {
+            type: a.transition.type || "DISSOLVE",
+            easing: a.transition.easing || { type: "EASE_IN_AND_OUT" },
+            duration: a.transition.duration !== undefined ? a.transition.duration : 0.3
+          };
+        }
+        if (a.url) action.url = a.url;
+        return action;
+      });
+    } else if (r.destinationId) {
+      // Shorthand: just provide destinationId at top level
+      reaction.actions = [{
+        type: "NODE",
+        destinationId: r.destinationId,
+        navigation: r.navigation || "NAVIGATE",
+        transition: r.transition || {
+          type: "DISSOLVE",
+          easing: { type: "EASE_IN_AND_OUT" },
+          duration: 0.3
+        }
+      }];
+    }
+
+    return reaction;
+  });
+
+  await node.setReactionsAsync(figmaReactions);
+
+  return {
+    nodeId: node.id,
+    nodeName: node.name,
+    reactionsCount: figmaReactions.length,
+    message: `Set ${figmaReactions.length} reaction(s) on "${node.name}"`
+  };
+}
+
+async function createComponentFromNode(params) {
+  const { nodeId } = params || {};
+  if (!nodeId) throw new Error("Missing nodeId parameter");
+
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found: ${nodeId}`);
+
+  const component = figma.createComponentFromNode(node);
+  return {
+    id: component.id,
+    name: component.name,
+    key: component.key,
+    type: component.type,
+    width: component.width,
+    height: component.height,
+    message: `Converted "${component.name}" to Component`
+  };
+}
+
+async function createVariables(params) {
+  const { collectionName, variables } = params || {};
+  if (!collectionName) throw new Error("Missing collectionName parameter");
+  if (!variables || !Array.isArray(variables)) throw new Error("Missing or invalid variables parameter");
+
+  // Create or find collection
+  const collection = figma.variables.createVariableCollection(collectionName);
+
+  // Rename default mode if modes provided
+  if (params.modes && Array.isArray(params.modes) && params.modes.length > 0) {
+    collection.renameMode(collection.modes[0].modeId, params.modes[0]);
+    for (let i = 1; i < params.modes.length; i++) {
+      collection.addMode(params.modes[i]);
+    }
+  }
+
+  const createdVars = [];
+  for (const v of variables) {
+    const variable = figma.variables.createVariable(
+      v.name,
+      collection,
+      v.resolvedType || "COLOR"
+    );
+
+    // Set values for each mode
+    if (v.values) {
+      const modes = collection.modes;
+      for (let i = 0; i < modes.length && i < v.values.length; i++) {
+        let value = v.values[i];
+        // Convert color objects if needed
+        if (v.resolvedType === "COLOR" && typeof value === "object") {
+          value = {
+            r: value.r !== undefined ? value.r : 0,
+            g: value.g !== undefined ? value.g : 0,
+            b: value.b !== undefined ? value.b : 0,
+            a: value.a !== undefined ? value.a : 1
+          };
+        }
+        variable.setValueForMode(modes[i].modeId, value);
+      }
+    }
+
+    createdVars.push({
+      id: variable.id,
+      name: variable.name,
+      resolvedType: variable.resolvedType
+    });
+  }
+
+  return {
+    collectionId: collection.id,
+    collectionName: collection.name,
+    modesCount: collection.modes.length,
+    variablesCount: createdVars.length,
+    variables: createdVars,
+    message: `Created collection "${collectionName}" with ${createdVars.length} variable(s)`
   };
 }
