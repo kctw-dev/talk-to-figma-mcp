@@ -1170,20 +1170,47 @@ async function getLocalComponents() {
 // }
 
 async function createComponentInstance(params) {
-  const { componentKey, x = 0, y = 0 } = params || {};
+  const { componentKey, componentId, parentId, x = 0, y = 0 } = params || {};
 
-  if (!componentKey) {
-    throw new Error("Missing componentKey parameter");
+  if (!componentKey && !componentId) {
+    throw new Error("Missing componentKey or componentId parameter");
   }
 
   try {
-    const component = await figma.importComponentByKeyAsync(componentKey);
+    let component;
+
+    // Try local component by ID first
+    if (componentId) {
+      const node = await figma.getNodeByIdAsync(componentId);
+      if (node && node.type === "COMPONENT") {
+        component = node;
+      } else {
+        throw new Error(`Node ${componentId} is not a COMPONENT (type: ${node ? node.type : 'not found'})`);
+      }
+    } else {
+      // Try local search by key first
+      const localComponents = figma.currentPage.findAllWithCriteria({ types: ["COMPONENT"] });
+      component = localComponents.find(c => c.key === componentKey);
+      if (!component) {
+        // Fall back to importComponentByKeyAsync for published components
+        component = await figma.importComponentByKeyAsync(componentKey);
+      }
+    }
+
     const instance = component.createInstance();
+
+    // If parentId is specified, append to that parent
+    if (parentId) {
+      const parent = await figma.getNodeByIdAsync(parentId);
+      if (parent && "appendChild" in parent) {
+        parent.appendChild(instance);
+      }
+    } else {
+      figma.currentPage.appendChild(instance);
+    }
 
     instance.x = x;
     instance.y = y;
-
-    figma.currentPage.appendChild(instance);
 
     return {
       id: instance.id,
@@ -1192,7 +1219,7 @@ async function createComponentInstance(params) {
       y: instance.y,
       width: instance.width,
       height: instance.height,
-      componentId: instance.componentId,
+      componentId: instance.componentId || component.id,
     };
   } catch (error) {
     throw new Error(`Error creating component instance: ${error.message}`);
