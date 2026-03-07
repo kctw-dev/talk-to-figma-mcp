@@ -1,263 +1,175 @@
-# Talk to Figma MCP
+# Talk to Figma MCP（KCTW Fork）
 
-This project implements a Model Context Protocol (MCP) integration between AI agent (Cursor, Claude Code) and Figma, allowing AI agent to communicate with Figma for reading designs and modifying them programmatically.
+Figma MCP 插件的私有 fork，基於 [grab/cursor-talk-to-figma-mcp](https://github.com/grab/cursor-talk-to-figma-mcp) v0.3.4。
 
-https://github.com/user-attachments/assets/129a14d2-ed73-470f-9a4c-2240b2a4885c
+讓 AI Agent（Claude Code）透過 MCP 協議與 Figma 溝通，讀取設計稿並程式化修改。
 
-## Project Structure
+## 與 Upstream 的差異
 
-- `src/talk_to_figma_mcp/` - TypeScript MCP server for Figma integration
-- `src/cursor_mcp_plugin/` - Figma plugin for communicating with Cursor
-- `src/socket.ts` - WebSocket server that facilitates communication between the MCP server and Figma plugin
+### 新增 Command
 
-## How to use
+| Command | 功能 | Figma Plugin API |
+|---------|------|-----------------|
+| `set_reactions` | 設定 Prototype 互動（ON_CLICK 導航等） | `node.setReactionsAsync()` |
+| `create_component_from_node` | Frame 轉 Component | `figma.createComponentFromNode()` |
+| `create_variables` | 建立 Variable Collection + 多模式 | `figma.variables.createVariable()` |
 
-1. Install Bun if you haven't already:
+### 安全強化
 
-```bash
-curl -fsSL https://bun.sh/install | bash
+- **ECDSA P-256 Challenge-Response**：WebSocket 連線需通過簽名驗證才能存取
+- socket.ts 持有 Public Key（驗證端）
+- ui.html + server.ts 持有 Private Key（簽名端）
+
+### 連線簡化
+
+- **自動加入 Channel**：不需手動交換 Channel ID
+- **Channel 可設定**：server.ts 用 `MCP_CHANNEL` 環境變數，ui.html 用 UI 輸入欄位
+- 支援多專案同時使用（每個專案設不同 channel 名稱）
+
+## 架構
+
+```
+NB (Figma Plugin)  ←SSH Tunnel + ECDSA auth→  GCE (socket.ts)  ←→  MCP Server (server.ts)  ←→  Claude Code
+     ui.html                                    port 3055              dist/server.js
+     code.js
 ```
 
-2. Run setup, this will also install MCP in your Cursor's active project
+## 安裝與使用
+
+### 前置需求
+
+- [Bun](https://bun.sh/)（WebSocket server 用）
+- [Node.js](https://nodejs.org/)（MCP server 用）
+- Figma Desktop App
+
+### 1. WebSocket Server（GCE 端）
 
 ```bash
-bun setup
+git clone git@github.com:KCTW/talk-to-figma-mcp.git
+cd talk-to-figma-mcp
+bun install
+bun run src/socket.ts
 ```
 
-3. Start the Websocket server
+### 2. MCP Server（Claude Code 端）
 
-```bash
-bun socket
-```
-
-4. **NEW** Install Figma plugin from [Figma community page](https://www.figma.com/community/plugin/1485687494525374295/cursor-talk-to-figma-mcp-plugin) or [install locally](#figma-plugin)
-
-## Quick Video Tutorial
-
-[Video Link](https://www.linkedin.com/posts/sonnylazuardi_just-wanted-to-share-my-latest-experiment-activity-7307821553654657024-yrh8)
-
-## Design Automation Example
-
-**Bulk text content replacement**
-
-Thanks to [@dusskapark](https://github.com/dusskapark) for contributing the bulk text replacement feature. Here is the [demo video](https://www.youtube.com/watch?v=j05gGT3xfCs).
-
-**Instance Override Propagation**
-Another contribution from [@dusskapark](https://github.com/dusskapark)
-Propagate component instance overrides from a source instance to multiple target instances with a single command. This feature dramatically reduces repetitive design work when working with component instances that need similar customizations. Check out our [demo video](https://youtu.be/uvuT8LByroI).
-
-## Manual Setup and Installation
-
-### MCP Server: Integration with Cursor
-
-Add the server to your Cursor MCP configuration in `~/.cursor/mcp.json`:
+在專案的 `.mcp.json` 設定：
 
 ```json
 {
   "mcpServers": {
-    "TalkToFigma": {
-      "command": "bunx",
-      "args": ["cursor-talk-to-figma-mcp@latest"]
+    "talk-to-figma": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/path/to/talk-to-figma-mcp/dist/server.js"],
+      "env": {
+        "PATH": "/home/user/.bun/bin:/usr/local/bin:/usr/bin:/bin",
+        "MCP_CHANNEL": "my-project"
+      }
     }
   }
 }
 ```
 
-### WebSocket Server
-
-Start the WebSocket server:
+Build MCP server：
 
 ```bash
-bun socket
+npm install
+npx tsup
 ```
 
-### Figma Plugin
+### 3. Figma Plugin（NB 端）
 
-1. In Figma, go to Plugins > Development > New Plugin
-2. Choose "Link existing plugin"
-3. Select the `src/cursor_mcp_plugin/manifest.json` file
-4. The plugin should now be available in your Figma development plugins
+1. Clone 此 repo 到本機
+2. Figma Desktop → Plugins → Development → **Import plugin from manifest**
+3. 選擇 `src/cursor_mcp_plugin/manifest.json`
+4. 開啟 plugin，Channel 欄填專案名稱，按 Connect
 
-## Windows + WSL Guide
+### 4. SSH Tunnel
 
-1. Install bun via powershell
+確保 NB 到 GCE 的 port 3055 有轉發：
 
 ```bash
-powershell -c "irm bun.sh/install.ps1|iex"
+ssh -L 3055:localhost:3055 user@gce-instance
 ```
 
-2. Uncomment the hostname `0.0.0.0` in `src/socket.ts`
+## MCP Tools 清單
 
-```typescript
-// uncomment this to allow connections in windows wsl
-hostname: "0.0.0.0",
-```
+### 文件與選取
+- `get_document_info` — 取得 Figma 文件資訊
+- `get_selection` — 取得目前選取
+- `read_my_design` — 取得選取的詳細節點資訊
+- `get_node_info` / `get_nodes_info` — 取得指定節點資訊
+- `set_focus` — 聚焦到指定節點
+- `set_selections` — 選取多個節點
 
-3. Start the websocket
+### 建立元素
+- `create_rectangle` — 建立矩形
+- `create_frame` — 建立 Frame
+- `create_text` — 建立文字
 
-```bash
-bun socket
-```
+### 修改元素
+- `move_node` — 移動節點
+- `resize_node` — 調整大小
+- `delete_node` / `delete_multiple_nodes` — 刪除節點
+- `clone_node` — 複製節點
 
-## Usage
+### 樣式
+- `set_fill_color` — 設定填充色
+- `set_stroke_color` — 設定邊框色
+- `set_corner_radius` — 設定圓角
 
-1. Start the WebSocket server
-2. Install the MCP server in Cursor
-3. Open Figma and run the Cursor MCP Plugin
-4. Connect the plugin to the WebSocket server by joining a channel using `join_channel`
-5. Use Cursor to communicate with Figma using the MCP tools
+### Auto Layout
+- `set_layout_mode` — 設定佈局模式
+- `set_padding` — 設定內距
+- `set_axis_align` — 設定軸對齊
+- `set_layout_sizing` — 設定尺寸模式
+- `set_item_spacing` — 設定間距
 
-## Local Development Setup
+### 文字操作
+- `scan_text_nodes` — 掃描文字節點
+- `set_text_content` — 設定文字內容
+- `set_multiple_text_contents` — 批次更新文字
 
-To develop, update your mcp config to direct to your local directory.
+### Component 與樣式
+- `get_styles` — 取得本地樣式
+- `get_local_components` — 取得本地 Component
+- `create_component_instance` — 建立 Component 實例
+- `get_instance_overrides` / `set_instance_overrides` — Component Override
 
-```json
-{
-  "mcpServers": {
-    "TalkToFigma": {
-      "command": "bun",
-      "args": ["/path-to-repo/src/talk_to_figma_mcp/server.ts"]
-    }
-  }
-}
-```
+### 註解
+- `get_annotations` / `set_annotation` / `set_multiple_annotations` — 註解管理
+- `scan_nodes_by_types` — 依類型掃描節點
 
-## MCP Tools
+### Prototype（Fork 新增）
+- `set_reactions` — 設定 Prototype 互動反應
+- `create_component_from_node` — Frame 轉 Component
+- `create_variables` — 建立 Design Variables
 
-The MCP server provides the following tools for interacting with Figma:
+### 匯出
+- `export_node_as_image` — 匯出節點為圖片
 
-### Document & Selection
+### 連線管理
+- `join_channel` — 加入通訊頻道
 
-- `get_document_info` - Get information about the current Figma document
-- `get_selection` - Get information about the current selection
-- `read_my_design` - Get detailed node information about the current selection without parameters
-- `get_node_info` - Get detailed information about a specific node
-- `get_nodes_info` - Get detailed information about multiple nodes by providing an array of node IDs
-- `set_focus` - Set focus on a specific node by selecting it and scrolling viewport to it
-- `set_selections` - Set selection to multiple nodes and scroll viewport to show them
+## 未來改進方案
 
-### Annotations
+**傳輸層**（取代 SSH tunnel）：
+- Cloudflare Tunnel：免費 zero-trust 方案
+- WireGuard/VPN：適合固定團隊
+- mTLS：最安全但管理複雜
 
-- `get_annotations` - Get all annotations in the current document or specific node
-- `set_annotation` - Create or update an annotation with markdown support
-- `set_multiple_annotations` - Batch create/update multiple annotations efficiently
-- `scan_nodes_by_types` - Scan for nodes with specific types (useful for finding annotation targets)
-
-### Prototyping & Connections
-
-- `get_reactions` - Get all prototype reactions from nodes with visual highlight animation
-- `set_default_connector` - Set a copied FigJam connector as the default connector style for creating connections (must be set before creating connections)
-- `create_connections` - Create FigJam connector lines between nodes, based on prototype flows or custom mapping
-
-### Creating Elements
-
-- `create_rectangle` - Create a new rectangle with position, size, and optional name
-- `create_frame` - Create a new frame with position, size, and optional name
-- `create_text` - Create a new text node with customizable font properties
-
-### Modifying text content
-
-- `scan_text_nodes` - Scan text nodes with intelligent chunking for large designs
-- `set_text_content` - Set the text content of a single text node
-- `set_multiple_text_contents` - Batch update multiple text nodes efficiently
-
-### Auto Layout & Spacing
-
-- `set_layout_mode` - Set the layout mode and wrap behavior of a frame (NONE, HORIZONTAL, VERTICAL)
-- `set_padding` - Set padding values for an auto-layout frame (top, right, bottom, left)
-- `set_axis_align` - Set primary and counter axis alignment for auto-layout frames
-- `set_layout_sizing` - Set horizontal and vertical sizing modes for auto-layout frames (FIXED, HUG, FILL)
-- `set_item_spacing` - Set distance between children in an auto-layout frame
-
-### Styling
-
-- `set_fill_color` - Set the fill color of a node (RGBA)
-- `set_stroke_color` - Set the stroke color and weight of a node
-- `set_corner_radius` - Set the corner radius of a node with optional per-corner control
-
-### Layout & Organization
-
-- `move_node` - Move a node to a new position
-- `resize_node` - Resize a node with new dimensions
-- `delete_node` - Delete a node
-- `delete_multiple_nodes` - Delete multiple nodes at once efficiently
-- `clone_node` - Create a copy of an existing node with optional position offset
-
-### Components & Styles
-
-- `get_styles` - Get information about local styles
-- `get_local_components` - Get information about local components
-- `create_component_instance` - Create an instance of a component
-- `get_instance_overrides` - Extract override properties from a selected component instance
-- `set_instance_overrides` - Apply extracted overrides to target instances
-
-### Export & Advanced
-
-- `export_node_as_image` - Export a node as an image (PNG, JPG, SVG, or PDF) - limited support on image currently returning base64 as text
-
-### Connection Management
-
-- `join_channel` - Join a specific channel to communicate with Figma
-
-### MCP Prompts
-
-The MCP server includes several helper prompts to guide you through complex design tasks:
-
-- `design_strategy` - Best practices for working with Figma designs
-- `read_design_strategy` - Best practices for reading Figma designs
-- `text_replacement_strategy` - Systematic approach for replacing text in Figma designs
-- `annotation_conversion_strategy` - Strategy for converting manual annotations to Figma's native annotations
-- `swap_overrides_instances` - Strategy for transferring overrides between component instances in Figma
-- `reaction_to_connector_strategy` - Strategy for converting Figma prototype reactions to connector lines using the output of 'get_reactions', and guiding the use 'create_connections' in sequence
-
-## Development
-
-### Building the Figma Plugin
-
-1. Navigate to the Figma plugin directory:
-
-   ```
-   cd src/cursor_mcp_plugin
-   ```
-
-2. Edit code.js and ui.html
-
-## Best Practices
-
-When working with the Figma MCP:
-
-1. Always join a channel before sending commands
-2. Get document overview using `get_document_info` first
-3. Check current selection with `get_selection` before modifications
-4. Use appropriate creation tools based on needs:
-   - `create_frame` for containers
-   - `create_rectangle` for basic shapes
-   - `create_text` for text elements
-5. Verify changes using `get_node_info`
-6. Use component instances when possible for consistency
-7. Handle errors appropriately as all commands can throw exceptions
-8. For large designs:
-   - Use chunking parameters in `scan_text_nodes`
-   - Monitor progress through WebSocket updates
-   - Implement appropriate error handling
-9. For text operations:
-   - Use batch operations when possible
-   - Consider structural relationships
-   - Verify changes with targeted exports
-10. For converting legacy annotations:
-    - Scan text nodes to identify numbered markers and descriptions
-    - Use `scan_nodes_by_types` to find UI elements that annotations refer to
-    - Match markers with their target elements using path, name, or proximity
-    - Categorize annotations appropriately with `get_annotations`
-    - Create native annotations with `set_multiple_annotations` in batches
-    - Verify all annotations are properly linked to their targets
-    - Delete legacy annotation nodes after successful conversion
-11. Visualize prototype noodles as FigJam connectors:
-
-- Use `get_reactions` to extract prototype flows,
-- set a default connector with `set_default_connector`,
-- and generate connector lines with `create_connections` for clear visual flow mapping.
+**應用層**：
+- Per-user Keypair 生成
+- Private Key 存 `figma.clientStorage`
+- Public Key 註冊機制
+- Key Rotation 機制
 
 ## License
 
-MIT
+MIT（同 upstream）
+
+## Upstream
+
+- **來源**: [grab/cursor-talk-to-figma-mcp](https://github.com/grab/cursor-talk-to-figma-mcp)
+- **Fork 時版本**: v0.3.4
