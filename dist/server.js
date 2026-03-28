@@ -36,6 +36,42 @@ var serverArg = args.find((arg) => arg.startsWith("--server="));
 var serverUrl = serverArg ? serverArg.split("=")[1] : "localhost";
 var WS_URL = serverUrl === "localhost" ? `ws://${serverUrl}` : `wss://${serverUrl}`;
 var MCP_CHANNEL = process.env.MCP_CHANNEL || "default";
+var EXPECTED_PLUGIN_VERSION = "1.1.0";
+server.tool(
+  "get_plugin_version",
+  "Get the Figma plugin version to verify it is up-to-date",
+  {},
+  async () => {
+    try {
+      const result = await sendCommandToFigma("get_plugin_version");
+      const version = result?.version || "unknown";
+      const isUpToDate = version === EXPECTED_PLUGIN_VERSION;
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            pluginVersion: version,
+            expectedVersion: EXPECTED_PLUGIN_VERSION,
+            isUpToDate,
+            message: isUpToDate ? `Plugin is up-to-date (v${version})` : `Plugin outdated! Running v${version}, expected v${EXPECTED_PLUGIN_VERSION}. Please update plugin files and reload in Figma.`
+          })
+        }]
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            pluginVersion: "unknown",
+            expectedVersion: EXPECTED_PLUGIN_VERSION,
+            isUpToDate: false,
+            message: `Could not get plugin version: ${error instanceof Error ? error.message : String(error)}`
+          })
+        }]
+      };
+    }
+  }
+);
 server.tool(
   "get_document_info",
   "Get detailed information about the current Figma document",
@@ -754,6 +790,40 @@ server.tool(
   }
 );
 server.tool(
+  "rename_node",
+  "Rename a node in Figma",
+  {
+    nodeId: z.string().describe("The ID of the node to rename"),
+    name: z.string().describe("New name for the node")
+  },
+  async ({ nodeId, name }) => {
+    try {
+      const result = await sendCommandToFigma("rename_node", {
+        nodeId,
+        name
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Renamed node from "${typedResult.oldName}" to "${typedResult.newName}"`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error renaming node: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
   "get_styles",
   "Get all styles from the current Figma document",
   {},
@@ -964,14 +1034,18 @@ server.tool(
   "create_component_instance",
   "Create an instance of a component in Figma",
   {
-    componentKey: z.string().describe("Key of the component to instantiate"),
+    componentKey: z.string().optional().describe("Key of the component to instantiate (for published components)"),
+    componentId: z.string().optional().describe("Node ID of a local component to instantiate"),
+    parentId: z.string().optional().describe("Optional parent node ID to append the instance to"),
     x: z.number().describe("X position"),
     y: z.number().describe("Y position")
   },
-  async ({ componentKey, x, y }) => {
+  async ({ componentKey, componentId, parentId, x, y }) => {
     try {
       const result = await sendCommandToFigma("create_component_instance", {
         componentKey,
+        componentId,
+        parentId,
         x,
         y
       });

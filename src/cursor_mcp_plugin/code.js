@@ -136,6 +136,20 @@ async function handleCommand(command, params) {
       return await setFillColor(params);
     case "set_stroke_color":
       return await setStrokeColor(params);
+    case "rename_node": {
+      const node = figma.getNodeById(params.nodeId);
+      if (!node) {
+        return { error: `Node ${params.nodeId} not found` };
+      }
+      const oldName = node.name;
+      node.name = params.name;
+      return {
+        success: true,
+        nodeId: params.nodeId,
+        oldName: oldName,
+        newName: params.name,
+      };
+    }
     case "move_node":
       return await moveNode(params);
     case "resize_node":
