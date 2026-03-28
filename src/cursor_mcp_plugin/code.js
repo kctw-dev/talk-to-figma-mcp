@@ -394,8 +394,9 @@ async function handleCommand(command, params) {
       return { success: true, pageId: page.id, pageName: page.name };
     }
     case "switch_page": {
+      await figma.loadAllPagesAsync();
       const pages = figma.root.children;
-      const targetPage = pages.find(p => p.id === params.pageId || p.name === params.pageName);
+      const targetPage = pages.find(function(p) { return p.id === params.pageId || p.name === params.pageName; });
       if (!targetPage) {
         return { error: `Page not found: ${params.pageId || params.pageName}` };
       }
@@ -403,12 +404,17 @@ async function handleCommand(command, params) {
       return { success: true, pageId: targetPage.id, pageName: targetPage.name };
     }
     case "get_pages": {
-      const pages = figma.root.children.map(p => ({
-        id: p.id,
-        name: p.name,
-        childCount: p.children.length,
-        isCurrent: p === figma.currentPage
-      }));
+      await figma.loadAllPagesAsync();
+      const pages = figma.root.children.map(function(p) {
+        var count = 0;
+        try { count = p.children.length; } catch(e) { count = -1; }
+        return {
+          id: p.id,
+          name: p.name,
+          childCount: count,
+          isCurrent: p === figma.currentPage
+        };
+      });
       return { pages };
     }
     case "set_gradient_fill": {
