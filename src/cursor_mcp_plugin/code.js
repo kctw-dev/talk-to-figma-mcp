@@ -389,7 +389,7 @@ async function handleCommand(command, params) {
       const page = figma.createPage();
       page.name = params.name || "New Page";
       if (params.setCurrent) {
-        figma.currentPage = page;
+        await figma.setCurrentPageAsync(page);
       }
       return { success: true, pageId: page.id, pageName: page.name };
     }
@@ -400,7 +400,7 @@ async function handleCommand(command, params) {
       if (!targetPage) {
         return { error: `Page not found: ${params.pageId || params.pageName}` };
       }
-      figma.currentPage = targetPage;
+      await figma.setCurrentPageAsync(targetPage);
       return { success: true, pageId: targetPage.id, pageName: targetPage.name };
     }
     case "get_pages": {
