@@ -258,6 +258,73 @@ async function handleCommand(command, params) {
       return await createComponentFromNode(params);
     case "create_variables":
       return await createVariables(params);
+    case "bind_variable_to_fill": {
+      const node = figma.getNodeById(params.nodeId);
+      if (!node || !("fills" in node)) {
+        return { error: `Node ${params.nodeId} not found or has no fills` };
+      }
+      // Find variable by name in collection
+      const collections = figma.variables.getLocalVariableCollections();
+      let targetVariable = null;
+      for (const collection of collections) {
+        for (const varId of collection.variableIds) {
+          const variable = figma.variables.getVariableById(varId);
+          if (variable && variable.name === params.variableName) {
+            targetVariable = variable;
+            break;
+          }
+        }
+        if (targetVariable) break;
+      }
+      if (!targetVariable) {
+        return { error: `Variable "${params.variableName}" not found` };
+      }
+      // Bind variable to fill
+      const fills = JSON.parse(JSON.stringify(node.fills));
+      if (fills.length === 0) {
+        return { error: "Node has no fills" };
+      }
+      fills[0] = figma.variables.setBoundVariableForPaint(fills[0], 'color', targetVariable);
+      node.fills = fills;
+      return {
+        success: true,
+        nodeId: params.nodeId,
+        variableName: params.variableName,
+        variableId: targetVariable.id
+      };
+    }
+    case "bind_variable_to_stroke": {
+      const node = figma.getNodeById(params.nodeId);
+      if (!node || !("strokes" in node)) {
+        return { error: `Node ${params.nodeId} not found or has no strokes` };
+      }
+      const collections = figma.variables.getLocalVariableCollections();
+      let targetVariable = null;
+      for (const collection of collections) {
+        for (const varId of collection.variableIds) {
+          const variable = figma.variables.getVariableById(varId);
+          if (variable && variable.name === params.variableName) {
+            targetVariable = variable;
+            break;
+          }
+        }
+        if (targetVariable) break;
+      }
+      if (!targetVariable) {
+        return { error: `Variable "${params.variableName}" not found` };
+      }
+      const strokes = JSON.parse(JSON.stringify(node.strokes));
+      if (strokes.length === 0) {
+        return { error: "Node has no strokes" };
+      }
+      strokes[0] = figma.variables.setBoundVariableForPaint(strokes[0], 'color', targetVariable);
+      node.strokes = strokes;
+      return {
+        success: true,
+        nodeId: params.nodeId,
+        variableName: params.variableName
+      };
+    }
     default:
       throw new Error(`Unknown command: ${command}`);
   }

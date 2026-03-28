@@ -824,6 +824,74 @@ server.tool(
   }
 );
 server.tool(
+  "bind_variable_to_fill",
+  "Bind a Figma variable to a node's fill color",
+  {
+    nodeId: z.string().describe("The ID of the node to bind the variable to"),
+    variableName: z.string().describe("The name of the Figma variable to bind")
+  },
+  async ({ nodeId, variableName }) => {
+    try {
+      const result = await sendCommandToFigma("bind_variable_to_fill", {
+        nodeId,
+        variableName
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Bound variable "${typedResult.variableName}" to fill of node ${typedResult.nodeId} (variableId: ${typedResult.variableId})`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error binding variable to fill: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "bind_variable_to_stroke",
+  "Bind a Figma variable to a node's stroke color",
+  {
+    nodeId: z.string().describe("The ID of the node to bind the variable to"),
+    variableName: z.string().describe("The name of the Figma variable to bind")
+  },
+  async ({ nodeId, variableName }) => {
+    try {
+      const result = await sendCommandToFigma("bind_variable_to_stroke", {
+        nodeId,
+        variableName
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Bound variable "${typedResult.variableName}" to stroke of node ${typedResult.nodeId}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error binding variable to stroke: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
   "get_styles",
   "Get all styles from the current Figma document",
   {},

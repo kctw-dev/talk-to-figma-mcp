@@ -1019,6 +1019,78 @@ server.tool(
   }
 );
 
+// Bind Variable to Fill Tool
+server.tool(
+  "bind_variable_to_fill",
+  "Bind a Figma variable to a node's fill color",
+  {
+    nodeId: z.string().describe("The ID of the node to bind the variable to"),
+    variableName: z.string().describe("The name of the Figma variable to bind"),
+  },
+  async ({ nodeId, variableName }: any) => {
+    try {
+      const result = await sendCommandToFigma("bind_variable_to_fill", {
+        nodeId,
+        variableName,
+      });
+      const typedResult = result as { nodeId: string; variableName: string; variableId: string };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Bound variable "${typedResult.variableName}" to fill of node ${typedResult.nodeId} (variableId: ${typedResult.variableId})`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error binding variable to fill: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Bind Variable to Stroke Tool
+server.tool(
+  "bind_variable_to_stroke",
+  "Bind a Figma variable to a node's stroke color",
+  {
+    nodeId: z.string().describe("The ID of the node to bind the variable to"),
+    variableName: z.string().describe("The name of the Figma variable to bind"),
+  },
+  async ({ nodeId, variableName }: any) => {
+    try {
+      const result = await sendCommandToFigma("bind_variable_to_stroke", {
+        nodeId,
+        variableName,
+      });
+      const typedResult = result as { nodeId: string; variableName: string };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Bound variable "${typedResult.variableName}" to stroke of node ${typedResult.nodeId}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error binding variable to stroke: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // Get Styles Tool
 server.tool(
   "get_styles",
@@ -2744,7 +2816,9 @@ type FigmaCommand =
   | "set_reactions"
   | "create_component_from_node"
   | "create_variables"
-  | "rename_node";
+  | "rename_node"
+  | "bind_variable_to_fill"
+  | "bind_variable_to_stroke";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -2908,6 +2982,14 @@ type CommandParams = {
   rename_node: {
     nodeId: string;
     name: string;
+  };
+  bind_variable_to_fill: {
+    nodeId: string;
+    variableName: string;
+  };
+  bind_variable_to_stroke: {
+    nodeId: string;
+    variableName: string;
   };
 };
 
