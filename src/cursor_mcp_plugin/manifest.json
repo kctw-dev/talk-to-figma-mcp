@@ -11,12 +11,11 @@
   "permissions": [],
   "networkAccess": {
     "allowedDomains": [
-      "ws://localhost:3055"
+      "*"
     ],
-    "reasoning": "This is a plugin for Cursor that allows you to connect to a local server",
+    "reasoning": "MCP plugin needs network access for WebSocket connection and image loading (set_image_fill)",
     "devAllowedDomains": [
-      "http://localhost:3055",
-      "ws://localhost:3055"
+      "*"
     ]
   },
   "documentAccess": "dynamic-page"
