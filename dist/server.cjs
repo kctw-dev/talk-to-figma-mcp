@@ -914,6 +914,268 @@ server.tool(
   }
 );
 server.tool(
+  "set_image_fill",
+  "Set an image fill on a node from a URL",
+  {
+    nodeId: import_zod.z.string().describe("The ID of the node to set the image fill on"),
+    imageUrl: import_zod.z.string().describe("The URL of the image to use as fill"),
+    scaleMode: import_zod.z.enum(["FILL", "FIT", "CROP", "TILE"]).optional().default("FILL").describe("How to scale the image within the node")
+  },
+  async ({ nodeId, imageUrl, scaleMode }) => {
+    try {
+      const result = await sendCommandToFigma("set_image_fill", {
+        nodeId,
+        imageUrl,
+        scaleMode
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set image fill on node ${typedResult.nodeId} (hash: ${typedResult.imageHash})`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting image fill: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "set_effects",
+  "Set visual effects (shadow, blur) on a node",
+  {
+    nodeId: import_zod.z.string().describe("The ID of the node to set effects on"),
+    effects: import_zod.z.array(import_zod.z.object({
+      type: import_zod.z.enum(["DROP_SHADOW", "INNER_SHADOW", "LAYER_BLUR", "BACKGROUND_BLUR"]).describe("The type of effect"),
+      radius: import_zod.z.number().optional().describe("Blur radius"),
+      color: import_zod.z.object({
+        r: import_zod.z.number().describe("Red (0-1)"),
+        g: import_zod.z.number().describe("Green (0-1)"),
+        b: import_zod.z.number().describe("Blue (0-1)"),
+        a: import_zod.z.number().optional().describe("Alpha (0-1)")
+      }).optional().describe("Effect color (for shadows)"),
+      offsetX: import_zod.z.number().optional().describe("Horizontal offset (for shadows)"),
+      offsetY: import_zod.z.number().optional().describe("Vertical offset (for shadows)"),
+      spread: import_zod.z.number().optional().describe("Spread (for shadows)"),
+      visible: import_zod.z.boolean().optional().describe("Whether the effect is visible")
+    })).describe("Array of effects to apply")
+  },
+  async ({ nodeId, effects }) => {
+    try {
+      const result = await sendCommandToFigma("set_effects", {
+        nodeId,
+        effects
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set ${typedResult.effectCount} effect(s) on node ${typedResult.nodeId}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting effects: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "set_font",
+  "Set font family, style, and size on a text node",
+  {
+    nodeId: import_zod.z.string().describe("The ID of the text node"),
+    fontFamily: import_zod.z.string().optional().default("Inter").describe("Font family name"),
+    fontStyle: import_zod.z.string().optional().default("Regular").describe("Font style (e.g., Regular, Bold, Italic)"),
+    fontSize: import_zod.z.number().optional().describe("Font size in pixels")
+  },
+  async ({ nodeId, fontFamily, fontStyle, fontSize }) => {
+    try {
+      const result = await sendCommandToFigma("set_font", {
+        nodeId,
+        fontFamily,
+        fontStyle,
+        fontSize
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set font "${typedResult.fontFamily} ${typedResult.fontStyle}" on node ${typedResult.nodeId}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting font: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "create_page",
+  "Create a new page in the Figma document",
+  {
+    name: import_zod.z.string().optional().describe("Name of the new page"),
+    setCurrent: import_zod.z.boolean().optional().describe("Whether to switch to the new page")
+  },
+  async ({ name, setCurrent }) => {
+    try {
+      const result = await sendCommandToFigma("create_page", {
+        name,
+        setCurrent
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Created page "${typedResult.pageName}" (ID: ${typedResult.pageId})`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error creating page: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "switch_page",
+  "Switch to a different page in the Figma document",
+  {
+    pageId: import_zod.z.string().optional().describe("The ID of the page to switch to"),
+    pageName: import_zod.z.string().optional().describe("The name of the page to switch to")
+  },
+  async ({ pageId, pageName }) => {
+    try {
+      const result = await sendCommandToFigma("switch_page", {
+        pageId,
+        pageName
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Switched to page "${typedResult.pageName}" (ID: ${typedResult.pageId})`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error switching page: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "get_pages",
+  "Get all pages in the current Figma document",
+  {},
+  async () => {
+    try {
+      const result = await sendCommandToFigma("get_pages");
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting pages: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "set_gradient_fill",
+  "Set a gradient fill on a node",
+  {
+    nodeId: import_zod.z.string().describe("The ID of the node to set the gradient on"),
+    stops: import_zod.z.array(import_zod.z.object({
+      color: import_zod.z.object({
+        r: import_zod.z.number().describe("Red (0-1)"),
+        g: import_zod.z.number().describe("Green (0-1)"),
+        b: import_zod.z.number().describe("Blue (0-1)"),
+        a: import_zod.z.number().optional().describe("Alpha (0-1)")
+      }).describe("Color at this stop"),
+      position: import_zod.z.number().describe("Position of this stop (0-1)")
+    })).describe("Array of gradient color stops"),
+    gradientType: import_zod.z.enum(["GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND"]).optional().default("GRADIENT_LINEAR").describe("Type of gradient"),
+    angle: import_zod.z.number().optional().describe("Angle of the gradient in degrees (for linear gradients)")
+  },
+  async ({ nodeId, stops, gradientType, angle }) => {
+    try {
+      const result = await sendCommandToFigma("set_gradient_fill", {
+        nodeId,
+        stops,
+        gradientType,
+        angle
+      });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Set gradient fill with ${typedResult.stopCount} stop(s) on node ${typedResult.nodeId}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error setting gradient fill: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
   "get_styles",
   "Get all styles from the current Figma document",
   {},

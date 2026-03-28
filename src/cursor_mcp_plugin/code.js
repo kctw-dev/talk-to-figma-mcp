@@ -325,6 +325,108 @@ async function handleCommand(command, params) {
         variableName: params.variableName
       };
     }
+    case "set_image_fill": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node || !("fills" in node)) {
+        return { error: `Node ${params.nodeId} not found or has no fills` };
+      }
+      try {
+        const response = await fetch(params.imageUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const image = figma.createImage(uint8Array);
+        node.fills = [{
+          type: "IMAGE",
+          imageHash: image.hash,
+          scaleMode: params.scaleMode || "FILL"
+        }];
+        return { success: true, nodeId: params.nodeId, imageHash: image.hash };
+      } catch (e) {
+        return { error: `Failed to load image: ${e.message}` };
+      }
+    }
+    case "set_effects": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node || !("effects" in node)) {
+        return { error: `Node ${params.nodeId} not found or has no effects` };
+      }
+      const effects = params.effects.map(e => ({
+        type: e.type,
+        visible: e.visible !== false,
+        radius: e.radius || 0,
+        ...(e.type.includes("SHADOW") ? {
+          color: { r: e.color?.r || 0, g: e.color?.g || 0, b: e.color?.b || 0, a: e.color?.a || 0.25 },
+          offset: { x: e.offsetX || 0, y: e.offsetY || 0 },
+          spread: e.spread || 0,
+          blendMode: "NORMAL"
+        } : {})
+      }));
+      node.effects = effects;
+      return { success: true, nodeId: params.nodeId, effectCount: effects.length };
+    }
+    case "set_font": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node || node.type !== "TEXT") {
+        return { error: `Node ${params.nodeId} not found or is not a text node` };
+      }
+      try {
+        const family = params.fontFamily || "Inter";
+        const style = params.fontStyle || "Regular";
+        await figma.loadFontAsync({ family, style });
+        node.fontName = { family, style };
+        if (params.fontSize) {
+          node.fontSize = params.fontSize;
+        }
+        return { success: true, nodeId: params.nodeId, fontFamily: family, fontStyle: style };
+      } catch (e) {
+        return { error: `Failed to set font: ${e.message}. Font "${params.fontFamily} ${params.fontStyle}" may not be available.` };
+      }
+    }
+    case "create_page": {
+      const page = figma.createPage();
+      page.name = params.name || "New Page";
+      if (params.setCurrent) {
+        figma.currentPage = page;
+      }
+      return { success: true, pageId: page.id, pageName: page.name };
+    }
+    case "switch_page": {
+      const pages = figma.root.children;
+      const targetPage = pages.find(p => p.id === params.pageId || p.name === params.pageName);
+      if (!targetPage) {
+        return { error: `Page not found: ${params.pageId || params.pageName}` };
+      }
+      figma.currentPage = targetPage;
+      return { success: true, pageId: targetPage.id, pageName: targetPage.name };
+    }
+    case "get_pages": {
+      const pages = figma.root.children.map(p => ({
+        id: p.id,
+        name: p.name,
+        childCount: p.children.length,
+        isCurrent: p === figma.currentPage
+      }));
+      return { pages };
+    }
+    case "set_gradient_fill": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node || !("fills" in node)) {
+        return { error: `Node ${params.nodeId} not found or has no fills` };
+      }
+      const gradientStops = params.stops.map(s => ({
+        color: { r: s.color.r, g: s.color.g, b: s.color.b, a: s.color.a || 1 },
+        position: s.position
+      }));
+      node.fills = [{
+        type: params.gradientType || "GRADIENT_LINEAR",
+        gradientStops: gradientStops,
+        gradientTransform: params.angle !== undefined
+          ? [[Math.cos(params.angle * Math.PI / 180), Math.sin(params.angle * Math.PI / 180), 0],
+             [-Math.sin(params.angle * Math.PI / 180), Math.cos(params.angle * Math.PI / 180), 0]]
+          : [[1, 0, 0], [0, 1, 0]]
+      }];
+      return { success: true, nodeId: params.nodeId, stopCount: gradientStops.length };
+    }
     default:
       throw new Error(`Unknown command: ${command}`);
   }
