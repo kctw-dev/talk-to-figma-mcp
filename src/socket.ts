@@ -16,35 +16,31 @@ const pendingAuth = new Map<ServerWebSocket<any>, string>(); // ws -> nonce
 // Store clients by channel
 const channels = new Map<string, Set<ServerWebSocket<any>>>();
 
+// --- Multi-agent routing ---
+// Each ws connection gets a short clientId for logging
+const clientIds = new Map<ServerWebSocket<any>, string>();
+// Track which ws sent a request by message id, so responses route back to sender
+const pendingRequests = new Map<string, ServerWebSocket<any>>(); // messageId -> sender ws
+
+// Timeout for stale pending requests (30 seconds)
+const PENDING_REQUEST_TTL_MS = 30_000;
+const pendingRequestTimers = new Map<string, Timer>(); // messageId -> cleanup timer
+
 function handleConnection(ws: ServerWebSocket<any>) {
-  console.log("New client connected — sending auth challenge");
+  const clientId = crypto.randomUUID().slice(0, 8);
+  clientIds.set(ws, clientId);
+  console.log(`New client connected [${clientId}] — auto-allowing (no auth)`);
 
-  // Generate random nonce for challenge
-  const nonce = randomBytes(32).toString('hex');
-  pendingAuth.set(ws, nonce);
-
-  // Send auth challenge
+  // Skip auth challenge entirely, immediately authenticate
+  authenticatedClients.add(ws);
   ws.send(JSON.stringify({
-    type: "auth_challenge",
-    nonce: nonce,
+    type: "system",
+    message: "Authenticated. Please join a channel to start.",
   }));
-
-  // Auto-allow if not authenticated within 10 seconds (SSH tunnel provides security)
-  setTimeout(() => {
-    if (pendingAuth.has(ws)) {
-      console.log("Auth timeout — allowing client (SSH tunnel mode)");
-      authenticatedClients.add(ws);
-      pendingAuth.delete(ws);
-      ws.send(JSON.stringify({
-        type: "system",
-        message: "Authenticated. Please join a channel to start.",
-      }));
-    }
-  }, 10000);
 }
 
 const server = Bun.serve({
-  port: 3055,
+  port: parseInt(process.env.SOCKET_PORT || "3055"),
   // uncomment this to allow connections in windows wsl
   // hostname: "0.0.0.0",
   fetch(req: Request, server: Server) {
@@ -82,7 +78,8 @@ const server = Bun.serve({
     message(ws: ServerWebSocket<any>, message: string | Buffer) {
       try {
         const data = JSON.parse(message as string);
-        console.log(`\n=== Received message from client ===`);
+        const senderClientId = clientIds.get(ws) || "unknown";
+        console.log(`\n=== Received message from client [${senderClientId}] ===`);
         console.log(`Type: ${data.type}, Channel: ${data.channel || 'N/A'}`);
         if (data.message?.command) {
           console.log(`Command: ${data.message.command}, ID: ${data.id}`);
@@ -190,7 +187,7 @@ const server = Bun.serve({
           return;
         }
 
-        // Handle regular messages
+        // Handle regular messages (requests from MCP agents to Plugin)
         if (data.type === "message") {
           const channelName = data.channel;
           if (!channelName || typeof channelName !== "string") {
@@ -210,6 +207,20 @@ const server = Bun.serve({
             return;
           }
 
+          // Track the request so we can route the response back to this sender
+          const messageId = data.id || data.message?.id;
+          if (messageId) {
+            pendingRequests.set(messageId, ws);
+            // Set a timeout to clean up stale pending requests
+            const timer = setTimeout(() => {
+              pendingRequests.delete(messageId);
+              pendingRequestTimers.delete(messageId);
+              console.log(`[routing] Cleaned up stale pending request: ${messageId}`);
+            }, PENDING_REQUEST_TTL_MS);
+            pendingRequestTimers.set(messageId, timer);
+            console.log(`[routing] Tracked request ${messageId} from client [${senderClientId}]`);
+          }
+
           // Broadcast to all OTHER clients in the channel (not the sender)
           // This prevents echo and ensures proper request-response flow
           let broadcastCount = 0;
@@ -222,16 +233,81 @@ const server = Bun.serve({
                 sender: "peer",
                 channel: channelName
               };
-              console.log(`\n=== Broadcasting to peer #${broadcastCount} ===`);
+              console.log(`\n=== Broadcasting to peer #${broadcastCount} [${clientIds.get(client) || "unknown"}] ===`);
               console.log(JSON.stringify(broadcastMessage, null, 2));
               client.send(JSON.stringify(broadcastMessage));
             }
           });
-          
+
           if (broadcastCount === 0) {
             console.log(`⚠️  No other clients in channel "${channelName}" to receive message!`);
           } else {
             console.log(`✓ Broadcast to ${broadcastCount} peer(s) in channel "${channelName}"`);
+          }
+          return;
+        }
+
+        // Handle response messages (Plugin responding to a specific request)
+        if (data.type === "response") {
+          const channelName = data.channel;
+          if (!channelName || typeof channelName !== "string") {
+            ws.send(JSON.stringify({
+              type: "error",
+              message: "Channel name is required"
+            }));
+            return;
+          }
+
+          const channelClients = channels.get(channelName);
+          if (!channelClients || !channelClients.has(ws)) {
+            ws.send(JSON.stringify({
+              type: "error",
+              message: "You must join the channel first"
+            }));
+            return;
+          }
+
+          const responseId = data.id;
+          const originalSender = responseId ? pendingRequests.get(responseId) : undefined;
+
+          if (originalSender && originalSender.readyState === WebSocket.OPEN) {
+            // Route response only to the original requester
+            const targetClientId = clientIds.get(originalSender) || "unknown";
+            console.log(`[routing] Routing response ${responseId} to client [${targetClientId}]`);
+            const broadcastMessage = {
+              type: "broadcast",
+              message: data.message,
+              sender: "peer",
+              channel: channelName,
+            };
+            originalSender.send(JSON.stringify(broadcastMessage));
+
+            // Clean up
+            pendingRequests.delete(responseId);
+            const timer = pendingRequestTimers.get(responseId);
+            if (timer) { clearTimeout(timer); pendingRequestTimers.delete(responseId); }
+          } else {
+            // Fallback: broadcast to all other clients (backward compat)
+            console.log(`[routing] No tracked sender for response ${responseId}, falling back to broadcast`);
+            if (responseId) {
+              pendingRequests.delete(responseId);
+              const timer = pendingRequestTimers.get(responseId);
+              if (timer) { clearTimeout(timer); pendingRequestTimers.delete(responseId); }
+            }
+            let broadcastCount = 0;
+            channelClients.forEach((client) => {
+              if (client !== ws && client.readyState === WebSocket.OPEN) {
+                broadcastCount++;
+                const broadcastMessage = {
+                  type: "broadcast",
+                  message: data.message,
+                  sender: "peer",
+                  channel: channelName,
+                };
+                client.send(JSON.stringify(broadcastMessage));
+              }
+            });
+            console.log(`✓ Fallback broadcast to ${broadcastCount} peer(s) in channel "${channelName}"`);
           }
         }
       } catch (err) {
@@ -239,9 +315,26 @@ const server = Bun.serve({
       }
     },
     close(ws: ServerWebSocket<any>) {
+      const closedClientId = clientIds.get(ws) || "unknown";
+      console.log(`Client [${closedClientId}] disconnected`);
+
       // Clean up auth state
       authenticatedClients.delete(ws);
       pendingAuth.delete(ws);
+
+      // Clean up pending requests from this client
+      for (const [messageId, sender] of pendingRequests.entries()) {
+        if (sender === ws) {
+          pendingRequests.delete(messageId);
+          const timer = pendingRequestTimers.get(messageId);
+          if (timer) { clearTimeout(timer); pendingRequestTimers.delete(messageId); }
+          console.log(`[routing] Cleaned up pending request ${messageId} from disconnected client [${closedClientId}]`);
+        }
+      }
+
+      // Clean up clientId mapping
+      clientIds.delete(ws);
+
       // Remove client from their channel
       channels.forEach((clients) => {
         clients.delete(ws);
