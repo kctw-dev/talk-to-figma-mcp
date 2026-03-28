@@ -350,17 +350,20 @@ async function handleCommand(command, params) {
       if (!node || !("effects" in node)) {
         return { error: `Node ${params.nodeId} not found or has no effects` };
       }
-      const effects = params.effects.map(e => ({
-        type: e.type,
-        visible: e.visible !== false,
-        radius: e.radius || 0,
-        ...(e.type.includes("SHADOW") ? {
-          color: { r: e.color?.r || 0, g: e.color?.g || 0, b: e.color?.b || 0, a: e.color?.a || 0.25 },
-          offset: { x: e.offsetX || 0, y: e.offsetY || 0 },
-          spread: e.spread || 0,
-          blendMode: "NORMAL"
-        } : {})
-      }));
+      const effects = params.effects.map(function(e) {
+        var effect = {
+          type: e.type,
+          visible: e.visible !== false,
+          radius: e.radius || 0
+        };
+        if (e.type.indexOf("SHADOW") !== -1) {
+          effect.color = { r: (e.color && e.color.r) || 0, g: (e.color && e.color.g) || 0, b: (e.color && e.color.b) || 0, a: (e.color && e.color.a) || 0.25 };
+          effect.offset = { x: e.offsetX || 0, y: e.offsetY || 0 };
+          effect.spread = e.spread || 0;
+          effect.blendMode = "NORMAL";
+        }
+        return effect;
+      });
       node.effects = effects;
       return { success: true, nodeId: params.nodeId, effectCount: effects.length };
     }
