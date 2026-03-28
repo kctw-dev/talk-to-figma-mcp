@@ -137,7 +137,7 @@ async function handleCommand(command, params) {
     case "set_stroke_color":
       return await setStrokeColor(params);
     case "rename_node": {
-      const node = figma.getNodeById(params.nodeId);
+      const node = await figma.getNodeByIdAsync(params.nodeId);
       if (!node) {
         return { error: `Node ${params.nodeId} not found` };
       }
@@ -259,16 +259,16 @@ async function handleCommand(command, params) {
     case "create_variables":
       return await createVariables(params);
     case "bind_variable_to_fill": {
-      const node = figma.getNodeById(params.nodeId);
+      const node = await figma.getNodeByIdAsync(params.nodeId);
       if (!node || !("fills" in node)) {
         return { error: `Node ${params.nodeId} not found or has no fills` };
       }
       // Find variable by name in collection
-      const collections = figma.variables.getLocalVariableCollections();
+      const collections = await figma.variables.getLocalVariableCollectionsAsync();
       let targetVariable = null;
       for (const collection of collections) {
         for (const varId of collection.variableIds) {
-          const variable = figma.variables.getVariableById(varId);
+          const variable = await figma.variables.getVariableByIdAsync(varId);
           if (variable && variable.name === params.variableName) {
             targetVariable = variable;
             break;
@@ -294,15 +294,15 @@ async function handleCommand(command, params) {
       };
     }
     case "bind_variable_to_stroke": {
-      const node = figma.getNodeById(params.nodeId);
+      const node = await figma.getNodeByIdAsync(params.nodeId);
       if (!node || !("strokes" in node)) {
         return { error: `Node ${params.nodeId} not found or has no strokes` };
       }
-      const collections = figma.variables.getLocalVariableCollections();
+      const collections = await figma.variables.getLocalVariableCollectionsAsync();
       let targetVariable = null;
       for (const collection of collections) {
         for (const varId of collection.variableIds) {
-          const variable = figma.variables.getVariableById(varId);
+          const variable = await figma.variables.getVariableByIdAsync(varId);
           if (variable && variable.name === params.variableName) {
             targetVariable = variable;
             break;
