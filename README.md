@@ -15,8 +15,13 @@
 | `create_component_instance` | 建立 Component Instance（含 componentId 支援）| ✅ |
 | `create_variables` | 建立 Variable Collection（COLOR/FLOAT/STRING/BOOLEAN，多模式）| ✅ |
 | `rename_node` | 節點重命名 | ✅ |
-| `bind_variable_to_fill` | 綁定 Variable 到填色 | 🔄 開發中 |
-| `bind_variable_to_stroke` | 綁定 Variable 到邊框色 | 🔄 開發中 |
+| `bind_variable_to_fill` | 綁定 Variable 到填色 | ✅ |
+| `bind_variable_to_stroke` | 綁定 Variable 到邊框色 | ✅ |
+| `set_image_fill` | 圖片填充（URL → image fill） | ✅ |
+| `set_effects` | 陰影/模糊特效 | ✅ |
+| `set_font` | 字體選擇 + 大小 | ✅ |
+| `set_gradient_fill` | 漸層填色 | ✅ |
+| `create_page` / `switch_page` / `get_pages` | 頁面管理 | ✅ |
 
 ### 多 Agent 支援
 
@@ -114,7 +119,7 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 }
 ```
 
-## MCP 工具一覽（50+）
+## MCP 工具一覽（60+）
 
 ### 讀取
 | 工具 | 說明 |
@@ -164,8 +169,19 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `set_instance_overrides` | Component Override |
 | `set_default_connector` | 預設連接線 |
 | `set_focus` / `set_selections` | 聚焦/選取 |
-| `bind_variable_to_fill` | 綁定 Variable 到填色 🔄 |
-| `bind_variable_to_stroke` | 綁定 Variable 到邊框 🔄 |
+| `bind_variable_to_fill` | 綁定 Variable 到填色 |
+| `bind_variable_to_stroke` | 綁定 Variable 到邊框 |
+| `set_image_fill` | 圖片填充（URL → image fill） |
+| `set_effects` | 陰影/模糊特效（DROP_SHADOW 等） |
+| `set_font` | 字體選擇 + 大小（fontFamily/fontStyle/fontSize） |
+| `set_gradient_fill` | 漸層填色（LINEAR/RADIAL/ANGULAR/DIAMOND） |
+
+### 頁面管理
+| 工具 | 說明 |
+|------|------|
+| `create_page` | 新增頁面 |
+| `switch_page` | 切換頁面（by ID 或 name） |
+| `get_pages` | 取得所有頁面清單 |
 
 ### 匯出
 | 工具 | 說明 |
@@ -181,15 +197,11 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 
 | 功能 | 狀態 | 說明 |
 |------|------|------|
-| 圖片填充 | ❌ 不支援 | 無法插入圖片，僅能用灰色佔位 |
-| 陰影/特效 | ❌ 不支援 | 無 set_effects 工具 |
-| 字體選擇 | ❌ 不支援 | create_text 無 fontFamily 參數 |
-| 漸層填色 | ❌ 不支援 | 僅支援純色 |
-| 頁面管理 | ❌ 不支援 | 無法新增/切換頁面 |
 | Pen tool | ❌ 不支援 | 無法畫自定義形狀 |
 | Boolean 運算 | ❌ 不支援 | 無 Union/Subtract |
-
-追蹤：[#1 — 擴充 MCP 工具](https://github.com/kctw-dev/talk-to-figma-mcp/issues/1)
+| Mask | ❌ 不支援 | 無法建遮罩 |
+| Grid/Guide | ❌ 不支援 | 無法設定網格線 |
+| 匯入 SVG 檔案 | ❌ 不支援 | 無法直接匯入 SVG |
 
 ## 開發
 
