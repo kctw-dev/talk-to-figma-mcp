@@ -3033,16 +3033,16 @@ server.tool(
     key: z.string().describe("The component key (from get_library_components)"),
     x: z.number().optional().describe("X position for the instance"),
     y: z.number().optional().describe("Y position for the instance"),
+    parentId: z.string().optional().describe("Parent node ID to append the instance into"),
   },
-  async ({ key, x, y }: any) => {
+  async ({ key, x, y, parentId }: any) => {
     try {
-      const result = await sendCommandToFigma("import_component_by_key", { key, x, y });
-      const typedResult = result as { success: boolean; componentName: string; instanceId: string; instanceName: string; width: number; height: number };
+      const result = await sendCommandToFigma("import_component_by_key", { key, x, y, parentId });
       return {
         content: [
           {
             type: "text",
-            text: `Imported component "${typedResult.componentName}" → instance "${typedResult.instanceName}" (${typedResult.instanceId}), size: ${typedResult.width}×${typedResult.height}`,
+            text: JSON.stringify(result, null, 2),
           },
         ],
       };
@@ -3118,6 +3118,158 @@ server.tool(
             text: `Error importing style: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
+      };
+    }
+  }
+);
+
+// Scan Instance Keys — get component keys from all instances under a node
+server.tool(
+  "scan_instance_keys",
+  "Scan all instances under a node and return their mainComponent keys (deduplicated). Use to discover published library component keys.",
+  {
+    nodeId: z.string().optional().describe("The node ID to scan (defaults to current page)"),
+  },
+  async ({ nodeId }: any) => {
+    try {
+      const result = await sendCommandToFigma("scan_instance_keys", { nodeId });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error scanning instance keys: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Get Instance Info — get mainComponent key from a single instance
+server.tool(
+  "get_instance_info",
+  "Get the mainComponent key and info from an instance node",
+  {
+    nodeId: z.string().describe("The instance node ID"),
+  },
+  async ({ nodeId }: any) => {
+    try {
+      const result = await sendCommandToFigma("get_instance_info", { nodeId });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting instance info: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Set Instance Properties — switch variant, toggle boolean props, etc.
+server.tool(
+  "set_instance_properties",
+  "Set component properties on an instance (e.g. switch Platform from Desktop to Mobile)",
+  {
+    nodeId: z.string().describe("The instance node ID"),
+    properties: z.record(z.any()).describe("Properties to set, e.g. {\"Platform\": \"Mobile\"}"),
+  },
+  async ({ nodeId, properties }: any) => {
+    try {
+      const result = await sendCommandToFigma("set_instance_properties", { nodeId, properties });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+      };
+    }
+  }
+);
+
+// Detach Instance — convert library instance to editable frame
+server.tool(
+  "detach_instance",
+  "Detach a library instance into an editable frame. After detaching, all sublayer text becomes modifiable.",
+  {
+    nodeId: z.string().describe("The instance node ID to detach"),
+  },
+  async ({ nodeId }: any) => {
+    try {
+      const result = await sendCommandToFigma("detach_instance", { nodeId });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+      };
+    }
+  }
+);
+
+// Walk and Replace Text — brute force text replacement by walking children tree
+server.tool(
+  "walk_and_replace_text",
+  "Walk entire node subtree and replace text by exact match. Works on library instance sublayers that getNodeByIdAsync cannot access.",
+  {
+    nodeId: z.string().describe("Root node ID to start walking from"),
+    replacements: z.array(z.object({
+      from: z.string().describe("Exact text to match"),
+      to: z.string().describe("Replacement text"),
+      contains: z.boolean().optional().describe("If true, match partial text"),
+    })).describe("Array of text replacements"),
+  },
+  async ({ nodeId, replacements }: any) => {
+    try {
+      const result = await sendCommandToFigma("walk_and_replace_text", { nodeId, replacements });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+      };
+    }
+  }
+);
+
+// Walk and Scan Text — brute force text scan by walking children tree
+server.tool(
+  "walk_and_scan_text",
+  "Walk entire node subtree and collect all text nodes. Works on library instance sublayers.",
+  {
+    nodeId: z.string().describe("Root node ID to start walking from"),
+  },
+  async ({ nodeId }: any) => {
+    try {
+      const result = await sendCommandToFigma("walk_and_scan_text", { nodeId });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
       };
     }
   }
@@ -3268,7 +3420,13 @@ type FigmaCommand =
   | "get_library_components"
   | "import_component_by_key"
   | "import_component_set_by_key"
-  | "import_style_by_key";
+  | "import_style_by_key"
+  | "scan_instance_keys"
+  | "get_instance_info"
+  | "set_instance_properties"
+  | "detach_instance"
+  | "walk_and_replace_text"
+  | "walk_and_scan_text";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -3481,9 +3639,15 @@ type CommandParams = {
   };
   get_library_collections: Record<string, never>;
   get_library_components: { collectionKey: string };
-  import_component_by_key: { key: string; x?: number; y?: number };
+  import_component_by_key: { key: string; x?: number; y?: number; parentId?: string };
   import_component_set_by_key: { key: string };
   import_style_by_key: { key: string };
+  scan_instance_keys: { nodeId?: string };
+  get_instance_info: { nodeId: string };
+  set_instance_properties: { nodeId: string; properties: Record<string, any> };
+  detach_instance: { nodeId: string };
+  walk_and_replace_text: { nodeId: string; replacements: Array<{ from: string; to: string; contains?: boolean }> };
+  walk_and_scan_text: { nodeId: string };
 };
 
 
@@ -3680,7 +3844,7 @@ async function joinChannel(channelName: string): Promise<void> {
 function sendCommandToFigma(
   command: FigmaCommand,
   params: unknown = {},
-  timeoutMs: number = 30000
+  timeoutMs: number = 60000
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     // If not connected, try to connect first

@@ -447,6 +447,153 @@ async function handleCommand(command, params) {
       return await importComponentSetByKey(params);
     case "import_style_by_key":
       return await importStyleByKey(params);
+    case "get_instance_info": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node || node.type !== "INSTANCE") {
+        return { error: `Node ${params.nodeId} is not an INSTANCE` };
+      }
+      const main = await node.getMainComponentAsync();
+      return {
+        instanceId: node.id,
+        instanceName: node.name,
+        componentKey: main ? main.key : null,
+        componentName: main ? main.name : null,
+        componentId: main ? main.id : null
+      };
+    }
+    case "scan_instance_keys": {
+      const root = params.nodeId
+        ? await figma.getNodeByIdAsync(params.nodeId)
+        : figma.currentPage;
+      if (!root) return { error: "Node not found" };
+      const instances = [];
+      async function walk(n) {
+        if (n.type === "INSTANCE") {
+          const main = await n.getMainComponentAsync();
+          instances.push({
+            instanceId: n.id,
+            instanceName: n.name,
+            componentKey: main ? main.key : null,
+            componentName: main ? main.name : null
+          });
+        }
+        if ("children" in n) {
+          for (const child of n.children) {
+            await walk(child);
+          }
+        }
+      }
+      await walk(root);
+      // dedupe by componentKey
+      const seen = new Set();
+      const unique = [];
+      for (const inst of instances) {
+        if (inst.componentKey && !seen.has(inst.componentKey)) {
+          seen.add(inst.componentKey);
+          unique.push(inst);
+        }
+      }
+      return { total: instances.length, unique: unique, uniqueCount: unique.length };
+    }
+    case "set_instance_properties": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node) return { error: `Node ${params.nodeId} not found` };
+      if (node.type !== "INSTANCE") return { error: `Node ${params.nodeId} is not an INSTANCE` };
+      try {
+        node.setProperties(params.properties);
+        return {
+          success: true,
+          nodeId: node.id,
+          nodeName: node.name,
+          width: Math.round(node.width),
+          height: Math.round(node.height),
+          properties: node.componentProperties
+        };
+      } catch (e) {
+        return { error: `Failed to set properties: ${e.message}` };
+      }
+    }
+    case "detach_instance": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node) return { error: `Node ${params.nodeId} not found` };
+      if (node.type !== "INSTANCE") return { error: `Node ${params.nodeId} is not an INSTANCE (type: ${node.type})` };
+      const detached = node.detachInstance();
+      return {
+        success: true,
+        nodeId: detached.id,
+        nodeName: detached.name,
+        nodeType: detached.type,
+        childCount: detached.children ? detached.children.length : 0
+      };
+    }
+    case "walk_and_replace_text": {
+      // Brute force: walk entire subtree, find text nodes by content match, replace
+      const root = params.nodeId
+        ? await figma.getNodeByIdAsync(params.nodeId)
+        : figma.currentPage;
+      if (!root) return { error: "Root node not found" };
+      const replacements = params.replacements; // [{from: "Products", to: "商品型錄"}, ...]
+      if (!replacements || !Array.isArray(replacements)) {
+        return { error: "replacements must be an array of {from, to}" };
+      }
+      const results = [];
+      const skipped = [];
+      async function walkReplace(n) {
+        try {
+          if (n.type === "TEXT") {
+            for (const r of replacements) {
+              if (n.characters === r.from || (r.contains && n.characters.includes(r.from))) {
+                try {
+                  const font = n.fontName;
+                  if (font && font !== figma.mixed) {
+                    await figma.loadFontAsync(font);
+                  }
+                  n.characters = r.to;
+                  results.push({ id: n.id, from: r.from, to: r.to, success: true });
+                } catch (e) {
+                  results.push({ id: n.id, from: r.from, to: r.to, success: false, error: e.message });
+                }
+                break;
+              }
+            }
+          }
+          if ("children" in n) {
+            for (const child of n.children) {
+              await walkReplace(child);
+            }
+          }
+        } catch (e) {
+          skipped.push({ id: n.id, name: n.name || "unknown", error: e.message });
+        }
+      }
+      await walkReplace(root);
+      return { replaced: results.length, skipped: skipped.length, results: results, skippedNodes: skipped };
+    }
+    case "walk_and_scan_text": {
+      // Brute force scan: walk entire subtree, collect all text nodes
+      const root = params.nodeId
+        ? await figma.getNodeByIdAsync(params.nodeId)
+        : figma.currentPage;
+      if (!root) return { error: "Root node not found" };
+      const texts = [];
+      const scanSkipped = [];
+      async function walkScan(n) {
+        try {
+          if (n.type === "TEXT") {
+            texts.push({ id: n.id, name: n.name, characters: n.characters });
+          }
+          if ("children" in n) {
+            for (const child of n.children) {
+              await walkScan(child);
+            }
+          }
+        } catch (e) {
+          scanSkipped.push({ id: n.id, name: n.name || "unknown", error: e.message });
+        }
+      }
+      await walkScan(root);
+      return { count: texts.length, skipped: scanSkipped.length, texts: texts, skippedNodes: scanSkipped };
+    }
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -504,20 +651,29 @@ async function getLibraryComponents(params) {
 async function importComponentByKey(params) {
   try {
     const component = await figma.importComponentByKeyAsync(params.key);
+    if (!component) {
+      return { error: `Component not found for key "${params.key}"` };
+    }
     const instance = component.createInstance();
+    if (params.parentId) {
+      const parent = await figma.getNodeByIdAsync(params.parentId);
+      if (parent && "appendChild" in parent) {
+        parent.appendChild(instance);
+      }
+    }
     if (params.x !== undefined) instance.x = params.x;
     if (params.y !== undefined) instance.y = params.y;
-    figma.currentPage.appendChild(instance);
     return {
       success: true,
-      componentName: component.name,
-      instanceId: instance.id,
-      instanceName: instance.name,
-      width: instance.width,
-      height: instance.height
+      componentName: component.name || "unknown",
+      componentType: component.type || "unknown",
+      instanceId: instance.id || "unknown",
+      instanceName: instance.name || "unknown",
+      width: Math.round(instance.width),
+      height: Math.round(instance.height)
     };
   } catch (e) {
-    return { error: `Failed to import component by key "${params.key}": ${e.message}` };
+    return { error: `Failed to import component by key "${params.key}": ${e.message || String(e)}` };
   }
 }
 
