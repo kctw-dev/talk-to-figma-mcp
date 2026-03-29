@@ -436,8 +436,121 @@ async function handleCommand(command, params) {
       }];
       return { success: true, nodeId: params.nodeId, stopCount: gradientStops.length };
     }
+    // Library API
+    case "get_library_collections":
+      return await getLibraryCollections();
+    case "get_library_components":
+      return await getLibraryComponents(params);
+    case "import_component_by_key":
+      return await importComponentByKey(params);
+    case "import_component_set_by_key":
+      return await importComponentSetByKey(params);
+    case "import_style_by_key":
+      return await importStyleByKey(params);
     default:
       throw new Error(`Unknown command: ${command}`);
+  }
+}
+
+// Library API implementations
+
+async function getLibraryCollections() {
+  try {
+    const collections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+    return {
+      collections: collections.map(c => ({
+        key: c.key,
+        name: c.name,
+        libraryName: c.libraryName
+      })),
+      count: collections.length
+    };
+  } catch (e) {
+    return { error: `Failed to get library collections: ${e.message}` };
+  }
+}
+
+async function getLibraryComponents(params) {
+  try {
+    // Use the undocumented but available method to get components from a library
+    // First try via variable collections approach
+    const collections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+    const targetCollection = collections.find(c => c.key === params.collectionKey || c.name === params.collectionKey);
+    if (!targetCollection) {
+      return { error: `Collection "${params.collectionKey}" not found. Use get_library_collections to list available collections.` };
+    }
+    // getComponentsInLibraryCollectionAsync is the official API
+    // But if it's not available, we return a helpful message
+    if (typeof figma.teamLibrary.getComponentsInLibraryCollectionAsync === 'function') {
+      const components = await figma.teamLibrary.getComponentsInLibraryCollectionAsync(targetCollection.key);
+      return {
+        collectionName: targetCollection.name,
+        libraryName: targetCollection.libraryName,
+        components: components.map(c => ({
+          key: c.key,
+          name: c.name,
+          description: c.description || ""
+        })),
+        count: components.length
+      };
+    } else {
+      return { error: "getComponentsInLibraryCollectionAsync is not available in this Figma version" };
+    }
+  } catch (e) {
+    return { error: `Failed to get library components: ${e.message}` };
+  }
+}
+
+async function importComponentByKey(params) {
+  try {
+    const component = await figma.importComponentByKeyAsync(params.key);
+    const instance = component.createInstance();
+    if (params.x !== undefined) instance.x = params.x;
+    if (params.y !== undefined) instance.y = params.y;
+    figma.currentPage.appendChild(instance);
+    return {
+      success: true,
+      componentName: component.name,
+      instanceId: instance.id,
+      instanceName: instance.name,
+      width: instance.width,
+      height: instance.height
+    };
+  } catch (e) {
+    return { error: `Failed to import component by key "${params.key}": ${e.message}` };
+  }
+}
+
+async function importComponentSetByKey(params) {
+  try {
+    const componentSet = await figma.importComponentSetByKeyAsync(params.key);
+    return {
+      success: true,
+      componentSetId: componentSet.id,
+      componentSetName: componentSet.name,
+      variants: componentSet.children.map(c => ({
+        id: c.id,
+        name: c.name,
+        key: c.key
+      })),
+      variantCount: componentSet.children.length
+    };
+  } catch (e) {
+    return { error: `Failed to import component set by key "${params.key}": ${e.message}` };
+  }
+}
+
+async function importStyleByKey(params) {
+  try {
+    const style = await figma.importStyleByKeyAsync(params.key);
+    return {
+      success: true,
+      styleId: style.id,
+      styleName: style.name,
+      styleType: style.type
+    };
+  } catch (e) {
+    return { error: `Failed to import style by key "${params.key}": ${e.message}` };
   }
 }
 
