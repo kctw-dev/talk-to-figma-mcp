@@ -2961,6 +2961,168 @@ server.tool(
   }
 );
 
+// ===== Library API Tools =====
+
+// Get Library Collections
+server.tool(
+  "get_library_collections",
+  "List all available library variable collections (from enabled team/community libraries)",
+  {},
+  async () => {
+    try {
+      const result = await sendCommandToFigma("get_library_collections", {});
+      const typedResult = result as { collections: Array<{ key: string; name: string; libraryName: string }>; count: number };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(typedResult, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting library collections: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Get Library Components
+server.tool(
+  "get_library_components",
+  "List components in a specific library collection by collection key or name",
+  {
+    collectionKey: z.string().describe("The key or name of the library collection (from get_library_collections)"),
+  },
+  async ({ collectionKey }: any) => {
+    try {
+      const result = await sendCommandToFigma("get_library_components", { collectionKey });
+      const typedResult = result as { collectionName: string; libraryName: string; components: Array<{ key: string; name: string; description: string }>; count: number };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(typedResult, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting library components: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Import Component by Key
+server.tool(
+  "import_component_by_key",
+  "Import a component from a library by its key and create an instance on the current page",
+  {
+    key: z.string().describe("The component key (from get_library_components)"),
+    x: z.number().optional().describe("X position for the instance"),
+    y: z.number().optional().describe("Y position for the instance"),
+  },
+  async ({ key, x, y }: any) => {
+    try {
+      const result = await sendCommandToFigma("import_component_by_key", { key, x, y });
+      const typedResult = result as { success: boolean; componentName: string; instanceId: string; instanceName: string; width: number; height: number };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Imported component "${typedResult.componentName}" → instance "${typedResult.instanceName}" (${typedResult.instanceId}), size: ${typedResult.width}×${typedResult.height}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error importing component: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Import Component Set by Key
+server.tool(
+  "import_component_set_by_key",
+  "Import a component set (with variants) from a library by its key",
+  {
+    key: z.string().describe("The component set key"),
+  },
+  async ({ key }: any) => {
+    try {
+      const result = await sendCommandToFigma("import_component_set_by_key", { key });
+      const typedResult = result as { success: boolean; componentSetId: string; componentSetName: string; variants: Array<{ id: string; name: string; key: string }>; variantCount: number };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Imported component set "${typedResult.componentSetName}" (${typedResult.componentSetId}) with ${typedResult.variantCount} variant(s):\n${typedResult.variants.map(v => `  - ${v.name} (${v.key})`).join('\n')}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error importing component set: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Import Style by Key
+server.tool(
+  "import_style_by_key",
+  "Import a style (color, text, effect, grid) from a library by its key",
+  {
+    key: z.string().describe("The style key"),
+  },
+  async ({ key }: any) => {
+    try {
+      const result = await sendCommandToFigma("import_style_by_key", { key });
+      const typedResult = result as { success: boolean; styleId: string; styleName: string; styleType: string };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Imported style "${typedResult.styleName}" (type: ${typedResult.styleType}, id: ${typedResult.styleId})`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error importing style: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // Strategy for converting Figma prototype reactions to connector lines
 server.prompt(
   "reaction_to_connector_strategy",
@@ -3101,7 +3263,12 @@ type FigmaCommand =
   | "create_page"
   | "switch_page"
   | "get_pages"
-  | "set_gradient_fill";
+  | "set_gradient_fill"
+  | "get_library_collections"
+  | "get_library_components"
+  | "import_component_by_key"
+  | "import_component_set_by_key"
+  | "import_style_by_key";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -3312,6 +3479,11 @@ type CommandParams = {
     gradientType?: string;
     angle?: number;
   };
+  get_library_collections: Record<string, never>;
+  get_library_components: { collectionKey: string };
+  import_component_by_key: { key: string; x?: number; y?: number };
+  import_component_set_by_key: { key: string };
+  import_style_by_key: { key: string };
 };
 
 

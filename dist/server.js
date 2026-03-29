@@ -2529,6 +2529,157 @@ server.tool(
     }
   }
 );
+server.tool(
+  "get_library_collections",
+  "List all available library variable collections (from enabled team/community libraries)",
+  {},
+  async () => {
+    try {
+      const result = await sendCommandToFigma("get_library_collections", {});
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(typedResult, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting library collections: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "get_library_components",
+  "List components in a specific library collection by collection key or name",
+  {
+    collectionKey: z.string().describe("The key or name of the library collection (from get_library_collections)")
+  },
+  async ({ collectionKey }) => {
+    try {
+      const result = await sendCommandToFigma("get_library_components", { collectionKey });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(typedResult, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting library components: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "import_component_by_key",
+  "Import a component from a library by its key and create an instance on the current page",
+  {
+    key: z.string().describe("The component key (from get_library_components)"),
+    x: z.number().optional().describe("X position for the instance"),
+    y: z.number().optional().describe("Y position for the instance")
+  },
+  async ({ key, x, y }) => {
+    try {
+      const result = await sendCommandToFigma("import_component_by_key", { key, x, y });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Imported component "${typedResult.componentName}" \u2192 instance "${typedResult.instanceName}" (${typedResult.instanceId}), size: ${typedResult.width}\xD7${typedResult.height}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error importing component: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "import_component_set_by_key",
+  "Import a component set (with variants) from a library by its key",
+  {
+    key: z.string().describe("The component set key")
+  },
+  async ({ key }) => {
+    try {
+      const result = await sendCommandToFigma("import_component_set_by_key", { key });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Imported component set "${typedResult.componentSetName}" (${typedResult.componentSetId}) with ${typedResult.variantCount} variant(s):
+${typedResult.variants.map((v) => `  - ${v.name} (${v.key})`).join("\n")}`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error importing component set: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "import_style_by_key",
+  "Import a style (color, text, effect, grid) from a library by its key",
+  {
+    key: z.string().describe("The style key")
+  },
+  async ({ key }) => {
+    try {
+      const result = await sendCommandToFigma("import_style_by_key", { key });
+      const typedResult = result;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Imported style "${typedResult.styleName}" (type: ${typedResult.styleType}, id: ${typedResult.styleId})`
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error importing style: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
 server.prompt(
   "reaction_to_connector_strategy",
   "Strategy for converting Figma prototype reactions to connector lines using the output of 'get_reactions'",
