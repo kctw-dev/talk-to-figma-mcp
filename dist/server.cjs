@@ -2615,17 +2615,17 @@ server.tool(
   {
     key: import_zod.z.string().describe("The component key (from get_library_components)"),
     x: import_zod.z.number().optional().describe("X position for the instance"),
-    y: import_zod.z.number().optional().describe("Y position for the instance")
+    y: import_zod.z.number().optional().describe("Y position for the instance"),
+    parentId: import_zod.z.string().optional().describe("Parent node ID to append the instance into")
   },
-  async ({ key, x, y }) => {
+  async ({ key, x, y, parentId }) => {
     try {
-      const result = await sendCommandToFigma("import_component_by_key", { key, x, y });
-      const typedResult = result;
+      const result = await sendCommandToFigma("import_component_by_key", { key, x, y, parentId });
       return {
         content: [
           {
             type: "text",
-            text: `Imported component "${typedResult.componentName}" \u2192 instance "${typedResult.instanceName}" (${typedResult.instanceId}), size: ${typedResult.width}\xD7${typedResult.height}`
+            text: JSON.stringify(result, null, 2)
           }
         ]
       };
@@ -2698,6 +2698,146 @@ server.tool(
             text: `Error importing style: ${error instanceof Error ? error.message : String(error)}`
           }
         ]
+      };
+    }
+  }
+);
+server.tool(
+  "scan_instance_keys",
+  "Scan all instances under a node and return their mainComponent keys (deduplicated). Use to discover published library component keys.",
+  {
+    nodeId: import_zod.z.string().optional().describe("The node ID to scan (defaults to current page)")
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("scan_instance_keys", { nodeId });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error scanning instance keys: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "get_instance_info",
+  "Get the mainComponent key and info from an instance node",
+  {
+    nodeId: import_zod.z.string().describe("The instance node ID")
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("get_instance_info", { nodeId });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting instance info: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "set_instance_properties",
+  "Set component properties on an instance (e.g. switch Platform from Desktop to Mobile)",
+  {
+    nodeId: import_zod.z.string().describe("The instance node ID"),
+    properties: import_zod.z.record(import_zod.z.any()).describe('Properties to set, e.g. {"Platform": "Mobile"}')
+  },
+  async ({ nodeId, properties }) => {
+    try {
+      const result = await sendCommandToFigma("set_instance_properties", { nodeId, properties });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+server.tool(
+  "detach_instance",
+  "Detach a library instance into an editable frame. After detaching, all sublayer text becomes modifiable.",
+  {
+    nodeId: import_zod.z.string().describe("The instance node ID to detach")
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("detach_instance", { nodeId });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+server.tool(
+  "walk_and_replace_text",
+  "Walk entire node subtree and replace text by exact match. Works on library instance sublayers that getNodeByIdAsync cannot access.",
+  {
+    nodeId: import_zod.z.string().describe("Root node ID to start walking from"),
+    replacements: import_zod.z.array(import_zod.z.object({
+      from: import_zod.z.string().describe("Exact text to match"),
+      to: import_zod.z.string().describe("Replacement text"),
+      contains: import_zod.z.boolean().optional().describe("If true, match partial text")
+    })).describe("Array of text replacements")
+  },
+  async ({ nodeId, replacements }) => {
+    try {
+      const result = await sendCommandToFigma("walk_and_replace_text", { nodeId, replacements });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }]
+      };
+    }
+  }
+);
+server.tool(
+  "walk_and_scan_text",
+  "Walk entire node subtree and collect all text nodes. Works on library instance sublayers.",
+  {
+    nodeId: import_zod.z.string().describe("Root node ID to start walking from")
+  },
+  async ({ nodeId }) => {
+    try {
+      const result = await sendCommandToFigma("walk_and_scan_text", { nodeId });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      };
+    } catch (error) {
+      return {
+        content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : String(error)}` }]
       };
     }
   }
@@ -2890,7 +3030,7 @@ async function joinChannel(channelName) {
     throw error;
   }
 }
-function sendCommandToFigma(command, params = {}, timeoutMs = 3e4) {
+function sendCommandToFigma(command, params = {}, timeoutMs = 6e4) {
   return new Promise((resolve, reject) => {
     if (!ws || ws.readyState !== import_ws.default.OPEN) {
       connectToFigma();
