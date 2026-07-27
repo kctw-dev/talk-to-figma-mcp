@@ -2,7 +2,7 @@
 // It handles Figma API commands
 
 // Plugin version — used by MCP to verify plugin is up-to-date
-const PLUGIN_VERSION = "1.1.0";
+const PLUGIN_VERSION = "1.7.0-reparent";
 
 // Plugin state
 const state = {
@@ -436,6 +436,92 @@ async function handleCommand(command, params) {
       }];
       return { success: true, nodeId: params.nodeId, stopCount: gradientStops.length };
     }
+    case "get_local_variables":
+      return await getLocalVariables(params);
+    case "create_tree":
+      return await createTree(params);
+    case "reparent_node": {
+      var rpNode = await figma.getNodeByIdAsync(params.nodeId);
+      if (!rpNode) {
+        return { error: "Node not found: " + params.nodeId };
+      }
+      var rpParent = params.parentId ? await figma.getNodeByIdAsync(params.parentId) : figma.currentPage;
+      if (!rpParent) {
+        return { error: "Parent not found: " + params.parentId };
+      }
+      try {
+        if (params.index !== undefined && rpParent.insertChild) {
+          rpParent.insertChild(params.index, rpNode);
+        } else {
+          rpParent.appendChild(rpNode);
+        }
+        if (params.x !== undefined) rpNode.x = params.x;
+        if (params.y !== undefined) rpNode.y = params.y;
+        return { success: true, nodeId: rpNode.id, newParentId: rpParent.id, newParentName: rpParent.name };
+      } catch (e) {
+        return { error: "reparent failed: " + e.message };
+      }
+    }
+    case "combine_as_variants": {
+      var vNodes = [];
+      for (var vi = 0; vi < params.nodeIds.length; vi++) {
+        var vn = await figma.getNodeByIdAsync(params.nodeIds[vi]);
+        if (!vn) {
+          return { error: "Node not found: " + params.nodeIds[vi] };
+        }
+        if (vn.type !== "COMPONENT") {
+          return { error: "Not a COMPONENT: " + params.nodeIds[vi] + " (" + vn.type + ")" };
+        }
+        vNodes.push(vn);
+      }
+      var vParent = params.parentId ? await figma.getNodeByIdAsync(params.parentId) : figma.currentPage;
+      if (!vParent) {
+        return { error: "Parent not found: " + params.parentId };
+      }
+      try {
+        var vSet = figma.combineAsVariants(vNodes, vParent);
+        if (params.name) vSet.name = params.name;
+        return {
+          success: true,
+          id: vSet.id,
+          name: vSet.name,
+          variantCount: vSet.children.length,
+          variants: vSet.children.map(function (c) { return { id: c.id, name: c.name }; })
+        };
+      } catch (e) {
+        return { error: "combineAsVariants failed: " + e.message };
+      }
+    }
+    case "bind_variables_batch":
+      return await bindVariablesBatch(params);
+    case "set_props_batch":
+      return await setPropsBatch(params);
+    case "get_node_tree":
+      return await getNodeTree(params);
+    case "find_components":
+      return await findComponents(params);
+    case "bind_variable_to_property": {
+      const node = await figma.getNodeByIdAsync(params.nodeId);
+      if (!node) {
+        return { error: `Node ${params.nodeId} not found` };
+      }
+      const targetVariable = await findLocalVariableByName(params.variableName);
+      if (!targetVariable) {
+        return { error: `Variable "${params.variableName}" not found` };
+      }
+      try {
+        node.setBoundVariable(params.field, targetVariable);
+        return {
+          success: true,
+          nodeId: params.nodeId,
+          field: params.field,
+          variableName: params.variableName,
+          variableId: targetVariable.id
+        };
+      } catch (e) {
+        return { error: `Failed to bind "${params.field}": ${e.message}` };
+      }
+    }
     // Library API
     case "get_library_collections":
       return await getLibraryCollections();
@@ -778,6 +864,446 @@ function rgbaToHex(color) {
   );
 }
 
+// ---- Batch tree builder -------------------------------------------------
+// Build a whole node subtree from one nested spec, in a single command.
+// Everything the Figma API can do in one plugin run happens here; the
+// per-node round trip was the only reason building a page was slow.
+
+function specHexToRgb(hex) {
+  var h = String(hex).replace("#", "");
+  var a = 1;
+  if (h.length === 8) {
+    a = parseInt(h.substring(6, 8), 16) / 255;
+    h = h.substring(0, 6);
+  }
+  return {
+    r: parseInt(h.substring(0, 2), 16) / 255,
+    g: parseInt(h.substring(2, 4), 16) / 255,
+    b: parseInt(h.substring(4, 6), 16) / 255,
+    a: a,
+  };
+}
+
+function specToPaint(value) {
+  if (!value) return null;
+  var c = typeof value === "string" ? specHexToRgb(value) : value;
+  var alpha = c.a === undefined ? 1 : c.a;
+  return { type: "SOLID", color: { r: c.r, g: c.g, b: c.b }, opacity: alpha };
+}
+
+var treeVarCache = {};
+async function specFindVariable(name) {
+  if (treeVarCache[name] !== undefined) return treeVarCache[name];
+  var v = await findLocalVariableByName(name);
+  treeVarCache[name] = v;
+  return v;
+}
+
+async function applyCommonSpec(node, spec, warnings) {
+  if (spec.fill) {
+    node.fills = [specToPaint(spec.fill)];
+  }
+  if (spec.fillVariable) {
+    var fv = await specFindVariable(spec.fillVariable);
+    if (fv) {
+      var fills = JSON.parse(JSON.stringify(node.fills));
+      if (fills.length === 0) fills = [specToPaint("#ffffff")];
+      fills[0] = figma.variables.setBoundVariableForPaint(fills[0], "color", fv);
+      node.fills = fills;
+    } else {
+      warnings.push('fillVariable not found: "' + spec.fillVariable + '" on ' + (spec.name || node.type));
+    }
+  }
+  if (spec.cornerRadius !== undefined && "cornerRadius" in node) {
+    node.cornerRadius = spec.cornerRadius;
+  }
+  if (spec.stroke) {
+    node.strokes = [specToPaint(spec.stroke)];
+    if (spec.strokeWeight !== undefined) node.strokeWeight = spec.strokeWeight;
+    if (spec.strokeAlign) node.strokeAlign = spec.strokeAlign;
+  }
+  if (spec.effects) node.effects = spec.effects;
+  if (spec.opacity !== undefined) node.opacity = spec.opacity;
+  if (spec.bindings) {
+    for (var b = 0; b < spec.bindings.length; b++) {
+      var bind = spec.bindings[b];
+      var bv = await specFindVariable(bind.variableName);
+      if (!bv) {
+        warnings.push('variable not found: "' + bind.variableName + '"');
+        continue;
+      }
+      try {
+        node.setBoundVariable(bind.field, bv);
+      } catch (e) {
+        warnings.push("bind " + bind.field + " failed: " + e.message);
+      }
+    }
+  }
+}
+
+function applyLayoutSpec(node, spec) {
+  if (spec.layoutMode) {
+    node.layoutMode = spec.layoutMode;
+    if (spec.layoutWrap) node.layoutWrap = spec.layoutWrap;
+    if (spec.primaryAxisAlignItems) node.primaryAxisAlignItems = spec.primaryAxisAlignItems;
+    if (spec.counterAxisAlignItems) node.counterAxisAlignItems = spec.counterAxisAlignItems;
+    if (spec.itemSpacing !== undefined) node.itemSpacing = spec.itemSpacing;
+    if (spec.counterAxisSpacing !== undefined) node.counterAxisSpacing = spec.counterAxisSpacing;
+    if (spec.paddingLeft !== undefined) node.paddingLeft = spec.paddingLeft;
+    if (spec.paddingRight !== undefined) node.paddingRight = spec.paddingRight;
+    if (spec.paddingTop !== undefined) node.paddingTop = spec.paddingTop;
+    if (spec.paddingBottom !== undefined) node.paddingBottom = spec.paddingBottom;
+  }
+}
+
+async function buildSpecNode(spec, parent, warnings) {
+  var node = null;
+  var type = spec.type || "FRAME";
+
+  if (type === "TEXT") {
+    var family = spec.fontFamily || "Noto Sans TC";
+    var style = spec.fontStyle || "Regular";
+    try {
+      await figma.loadFontAsync({ family: family, style: style });
+    } catch (e) {
+      warnings.push('font "' + family + " " + style + '" unavailable, fell back to Inter Regular');
+      family = "Inter";
+      style = "Regular";
+      await figma.loadFontAsync({ family: family, style: style });
+    }
+    node = figma.createText();
+    node.fontName = { family: family, style: style };
+    node.characters = spec.text || "";
+    if (spec.fontSize !== undefined) node.fontSize = spec.fontSize;
+    if (spec.textAlignHorizontal) node.textAlignHorizontal = spec.textAlignHorizontal;
+    if (spec.lineHeight !== undefined) node.lineHeight = { value: spec.lineHeight, unit: "PIXELS" };
+    if (spec.fontColor) node.fills = [specToPaint(spec.fontColor)];
+  } else if (type === "INSTANCE") {
+    var comp = await figma.getNodeByIdAsync(spec.componentId);
+    if (!comp || comp.type !== "COMPONENT") {
+      warnings.push("component not found: " + spec.componentId);
+      return null;
+    }
+    node = comp.createInstance();
+  } else if (type === "RECTANGLE") {
+    node = figma.createRectangle();
+  } else {
+    node = figma.createFrame();
+  }
+
+  if (spec.name) node.name = spec.name;
+
+  // append BEFORE sizing so FILL/HUG can resolve against the real parent
+  parent.appendChild(node);
+
+  if (type !== "TEXT") {
+    applyLayoutSpec(node, spec);
+    if (spec.width !== undefined && spec.height !== undefined && "resize" in node) {
+      node.resize(spec.width, spec.height);
+    }
+  }
+
+  await applyCommonSpec(node, spec, warnings);
+
+  if (spec.children && node.type === "FRAME") {
+    for (var i = 0; i < spec.children.length; i++) {
+      await buildSpecNode(spec.children[i], node, warnings);
+    }
+  }
+
+  // sizing modes last — they depend on children being present
+  if (spec.layoutSizingHorizontal && parent.layoutMode) {
+    try { node.layoutSizingHorizontal = spec.layoutSizingHorizontal; } catch (e) {
+      warnings.push("layoutSizingHorizontal failed on " + node.name + ": " + e.message);
+    }
+  }
+  if (spec.layoutSizingVertical && parent.layoutMode) {
+    try { node.layoutSizingVertical = spec.layoutSizingVertical; } catch (e) {
+      warnings.push("layoutSizingVertical failed on " + node.name + ": " + e.message);
+    }
+  }
+
+  var result = { id: node.id, name: node.name, type: node.type };
+  if (spec.children && node.children) {
+    result.children = [];
+    for (var c = 0; c < node.children.length; c++) {
+      // only report the ones this call created
+      if (c >= node.children.length - spec.children.length) {
+        result.children.push({ id: node.children[c].id, name: node.children[c].name, type: node.children[c].type });
+      }
+    }
+  }
+  return result;
+}
+
+// specs may arrive JSON-encoded depending on the client — normalise first
+function coerceSpec(s) {
+  if (typeof s === "string") {
+    try { return JSON.parse(s); } catch (e) { return null; }
+  }
+  return s;
+}
+
+async function createTree(params) {
+  treeVarCache = {};
+  var parent = params.parentId ? await figma.getNodeByIdAsync(params.parentId) : figma.currentPage;
+  if (!parent) return { error: "Parent node not found: " + params.parentId };
+  var raw = params.specs || (params.spec ? [params.spec] : []);
+  raw = coerceSpec(raw) || [];
+  if (!Array.isArray(raw)) raw = [raw];
+  var specs = [];
+  for (var s = 0; s < raw.length; s++) {
+    var parsed = coerceSpec(raw[s]);
+    if (parsed) specs.push(parsed);
+  }
+  if (specs.length === 0) return { error: "No usable spec provided (could not parse)" };
+  var warnings = [];
+  var created = [];
+  for (var i = 0; i < specs.length; i++) {
+    var r = await buildSpecNode(specs[i], parent, warnings);
+    if (r) created.push(r);
+  }
+  return { success: true, parentId: parent.id, createdCount: created.length, created: created, warnings: warnings };
+}
+
+async function bindVariablesBatch(params) {
+  treeVarCache = {};
+  var items = params.bindings || [];
+  var ok = 0;
+  var failures = [];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var node = await figma.getNodeByIdAsync(it.nodeId);
+    if (!node) { failures.push({ nodeId: it.nodeId, error: "node not found" }); continue; }
+    var v = await specFindVariable(it.variableName);
+    if (!v) { failures.push({ nodeId: it.nodeId, error: 'variable not found: ' + it.variableName }); continue; }
+    try {
+      var field = it.field || "fill";
+      if (field === "fill" || field === "stroke") {
+        var key = field === "fill" ? "fills" : "strokes";
+        var paints = JSON.parse(JSON.stringify(node[key]));
+        if (paints.length === 0) { failures.push({ nodeId: it.nodeId, error: "no " + key }); continue; }
+        paints[0] = figma.variables.setBoundVariableForPaint(paints[0], "color", v);
+        node[key] = paints;
+      } else {
+        node.setBoundVariable(field, v);
+      }
+      ok++;
+    } catch (e) {
+      failures.push({ nodeId: it.nodeId, error: e.message });
+    }
+  }
+  return { success: true, bound: ok, failed: failures.length, failures: failures };
+}
+
+// Batch-set arbitrary properties on many nodes in one round trip.
+async function setPropsBatch(params) {
+  var items = params.items || [];
+  var ok = 0;
+  var failures = [];
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var node = await figma.getNodeByIdAsync(it.nodeId);
+    if (!node) { failures.push({ nodeId: it.nodeId, error: "node not found" }); continue; }
+    try {
+      if (it.name) node.name = it.name;
+      if (it.layoutMode) node.layoutMode = it.layoutMode;
+      if (it.primaryAxisAlignItems) node.primaryAxisAlignItems = it.primaryAxisAlignItems;
+      if (it.counterAxisAlignItems) node.counterAxisAlignItems = it.counterAxisAlignItems;
+      if (it.effects) node.effects = it.effects;
+      if (it.stroke) {
+        node.strokes = [specToPaint(it.stroke)];
+        if (it.strokeWeight !== undefined) node.strokeWeight = it.strokeWeight;
+      }
+      if (it.strokeWeight !== undefined && !it.stroke) node.strokeWeight = it.strokeWeight;
+      if (it.strokeAlign) node.strokeAlign = it.strokeAlign;
+      if (it.fill) node.fills = [specToPaint(it.fill)];
+      if (it.cornerRadius !== undefined && "cornerRadius" in node) node.cornerRadius = it.cornerRadius;
+      if (it.opacity !== undefined) node.opacity = it.opacity;
+      if (it.width !== undefined && it.height !== undefined && "resize" in node) node.resize(it.width, it.height);
+      if (it.itemSpacing !== undefined) node.itemSpacing = it.itemSpacing;
+      if (it.paddingLeft !== undefined) node.paddingLeft = it.paddingLeft;
+      if (it.paddingRight !== undefined) node.paddingRight = it.paddingRight;
+      if (it.paddingTop !== undefined) node.paddingTop = it.paddingTop;
+      if (it.paddingBottom !== undefined) node.paddingBottom = it.paddingBottom;
+      if (it.layoutSizingHorizontal) node.layoutSizingHorizontal = it.layoutSizingHorizontal;
+      if (it.layoutSizingVertical) node.layoutSizingVertical = it.layoutSizingVertical;
+      if (it.text !== undefined && node.type === "TEXT") {
+        await figma.loadFontAsync(node.fontName);
+        node.characters = it.text;
+      }
+      if ((it.fontFamily || it.fontStyle) && node.type === "TEXT") {
+        var fam = it.fontFamily || node.fontName.family;
+        var sty = it.fontStyle || node.fontName.style;
+        await figma.loadFontAsync({ family: fam, style: sty });
+        node.fontName = { family: fam, style: sty };
+      }
+      if (it.fontSize !== undefined && node.type === "TEXT") {
+        await figma.loadFontAsync(node.fontName);
+        node.fontSize = it.fontSize;
+      }
+      ok++;
+    } catch (e) {
+      failures.push({ nodeId: it.nodeId, error: e.message });
+    }
+  }
+  return { success: true, updated: ok, failed: failures.length, failures: failures };
+}
+
+// Lean structural read — ids/names/types/sizes only, no paints or text.
+// get_node_info returns ~900KB on a busy page; this keeps it readable.
+async function getNodeTree(params) {
+  var node = await figma.getNodeByIdAsync(params.nodeId);
+  if (!node) return { error: "Node not found: " + params.nodeId };
+  var maxDepth = params.maxDepth === undefined ? 3 : params.maxDepth;
+  var count = 0;
+  function walk(n, depth) {
+    count++;
+    var out = { id: n.id, name: n.name, type: n.type };
+    if ("width" in n) { out.w = Math.round(n.width); out.h = Math.round(n.height); }
+    if (n.type === "TEXT") out.chars = n.characters.slice(0, 30);
+    if (n.children && depth < maxDepth) {
+      out.children = [];
+      for (var i = 0; i < n.children.length; i++) out.children.push(walk(n.children[i], depth + 1));
+    } else if (n.children && n.children.length) {
+      out.childCount = n.children.length;
+    }
+    return out;
+  }
+  var tree = walk(node, 0);
+  return { nodeCount: count, tree: tree };
+}
+
+// Search local components by name substring — avoids dumping a whole icon page.
+async function findComponents(params) {
+  await figma.loadAllPagesAsync();
+  var q = String(params.query || "").toLowerCase();
+  var limit = params.limit || 50;
+  var comps = figma.root.findAllWithCriteria({ types: ["COMPONENT"] });
+  var hits = [];
+  for (var i = 0; i < comps.length && hits.length < limit; i++) {
+    if (comps[i].name.toLowerCase().indexOf(q) !== -1) {
+      hits.push({ id: comps[i].id, name: comps[i].name, key: comps[i].key });
+    }
+  }
+  return { query: params.query, totalComponents: comps.length, matched: hits.length, components: hits };
+}
+
+// Look up a local variable by its full name
+async function findLocalVariableByName(name) {
+  var collections = await figma.variables.getLocalVariableCollectionsAsync();
+  for (var i = 0; i < collections.length; i++) {
+    var ids = collections[i].variableIds;
+    for (var j = 0; j < ids.length; j++) {
+      var variable = await figma.variables.getVariableByIdAsync(ids[j]);
+      if (variable && variable.name === name) {
+        return variable;
+      }
+    }
+  }
+  return null;
+}
+
+// Describe a raw valuesByMode entry: alias vs hard-coded value
+function describeVariableValue(raw, resolvedType) {
+  if (raw === undefined || raw === null) {
+    return { kind: "UNSET" };
+  }
+  if (typeof raw === "object" && raw.type === "VARIABLE_ALIAS") {
+    return { kind: "ALIAS", aliasId: raw.id };
+  }
+  if (typeof raw === "object" && raw.r !== undefined) {
+    return { kind: "RAW", type: "COLOR", hex: rgbaToHex(raw) };
+  }
+  return { kind: "RAW", type: resolvedType, value: raw };
+}
+
+// Read local variable collections, modes and per-mode values (read-only)
+async function getLocalVariables(params) {
+  var opts = params || {};
+  var wantName = opts.collectionName ? String(opts.collectionName) : null;
+  var summaryOnly = opts.summaryOnly === true;
+
+  var collections = await figma.variables.getLocalVariableCollectionsAsync();
+  var nameCache = {};
+  var out = [];
+
+  for (var i = 0; i < collections.length; i++) {
+    var c = collections[i];
+    if (wantName && c.name !== wantName) {
+      continue;
+    }
+
+    var modes = [];
+    for (var m = 0; m < c.modes.length; m++) {
+      modes.push({ modeId: c.modes[m].modeId, name: c.modes[m].name });
+    }
+
+    // per-mode tally of alias vs hard-coded — this is the design-system health check
+    var tally = {};
+    for (var t = 0; t < modes.length; t++) {
+      tally[modes[t].name] = { ALIAS: 0, RAW: 0, UNSET: 0 };
+    }
+
+    var vars = [];
+    for (var v = 0; v < c.variableIds.length; v++) {
+      var variable = await figma.variables.getVariableByIdAsync(c.variableIds[v]);
+      if (!variable) {
+        continue;
+      }
+      nameCache[variable.id] = variable.name;
+
+      var valuesByMode = {};
+      for (var m2 = 0; m2 < modes.length; m2++) {
+        var modeName = modes[m2].name;
+        var described = describeVariableValue(
+          variable.valuesByMode[modes[m2].modeId],
+          variable.resolvedType
+        );
+        tally[modeName][described.kind] = tally[modeName][described.kind] + 1;
+        valuesByMode[modeName] = described;
+      }
+
+      vars.push({
+        id: variable.id,
+        name: variable.name,
+        resolvedType: variable.resolvedType,
+        valuesByMode: valuesByMode,
+      });
+    }
+
+    // resolve alias targets to readable names where we can
+    for (var a = 0; a < vars.length; a++) {
+      var vm = vars[a].valuesByMode;
+      for (var key in vm) {
+        if (vm[key].kind !== "ALIAS") {
+          continue;
+        }
+        var targetId = vm[key].aliasId;
+        if (nameCache[targetId] === undefined) {
+          var target = await figma.variables.getVariableByIdAsync(targetId);
+          nameCache[targetId] = target ? target.name : null;
+        }
+        vm[key].aliasOf = nameCache[targetId];
+      }
+    }
+
+    var entry = {
+      id: c.id,
+      name: c.name,
+      modes: modes,
+      variableCount: c.variableIds.length,
+      tallyByMode: tally,
+    };
+    if (!summaryOnly) {
+      entry.variables = vars;
+    }
+    out.push(entry);
+  }
+
+  return { collections: out, count: out.length };
+}
+
 function filterFigmaNode(node) {
   if (node.type === "VECTOR") {
     return null;
@@ -789,10 +1315,15 @@ function filterFigmaNode(node) {
     type: node.type,
   };
 
+  // node-level token bindings (radius, spacing, typography…) — kept so callers
+  // can tell a real token from a hard-coded value
+  if (node.boundVariables) {
+    filtered.boundVariables = node.boundVariables;
+  }
+
   if (node.fills && node.fills.length > 0) {
     filtered.fills = node.fills.map((fill) => {
       var processedFill = Object.assign({}, fill);
-      delete processedFill.boundVariables;
       delete processedFill.imageRef;
 
       if (processedFill.gradientStops) {
@@ -802,7 +1333,6 @@ function filterFigmaNode(node) {
             if (processedStop.color) {
               processedStop.color = rgbaToHex(processedStop.color);
             }
-            delete processedStop.boundVariables;
             return processedStop;
           }
         );
@@ -819,7 +1349,6 @@ function filterFigmaNode(node) {
   if (node.strokes && node.strokes.length > 0) {
     filtered.strokes = node.strokes.map((stroke) => {
       var processedStroke = Object.assign({}, stroke);
-      delete processedStroke.boundVariables;
       if (processedStroke.color) {
         processedStroke.color = rgbaToHex(processedStroke.color);
       }

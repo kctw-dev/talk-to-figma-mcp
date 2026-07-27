@@ -2961,6 +2961,204 @@ server.tool(
   }
 );
 
+// Move a node to a different parent (move_node only changes coordinates)
+server.tool(
+  "reparent_node",
+  "Move a node into a different parent. Unlike move_node (which only sets x/y and is ignored inside auto-layout), this actually re-parents. Optional index to insert at a position, and x/y for non-auto-layout parents.",
+  {
+    nodeId: z.string().describe("Node to move"),
+    parentId: z.string().optional().describe("New parent (defaults to current page)"),
+    index: z.number().optional().describe("Insert position among the parent's children"),
+    x: z.number().optional(),
+    y: z.number().optional(),
+  },
+  async ({ nodeId, parentId, index, x, y }: any) => {
+    try {
+      const result = await sendCommandToFigma("reparent_node", { nodeId, parentId, index, x, y });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error reparenting: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Combine components into a variant set
+server.tool(
+  "combine_as_variants",
+  "Combine several COMPONENT nodes into a single Component Set (variants). Name each component 'Prop=Value, Prop=Value' beforehand so Figma derives the variant properties.",
+  {
+    nodeIds: z.array(z.string()).describe("COMPONENT node ids to combine"),
+    parentId: z.string().optional().describe("Where to put the resulting set (defaults to current page)"),
+    name: z.string().optional().describe("Name for the component set"),
+  },
+  async ({ nodeIds, parentId, name }: any) => {
+    try {
+      const result = await sendCommandToFigma("combine_as_variants", { nodeIds, parentId, name });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error combining variants: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Build a whole subtree in one round trip
+server.tool(
+  "create_tree",
+  "Build an entire node subtree from one nested spec in a single call. Each spec node: {type: FRAME|TEXT|INSTANCE|RECTANGLE, name, width, height, layoutMode, layoutWrap, itemSpacing, padding*, primaryAxisAlignItems, counterAxisAlignItems, layoutSizingHorizontal/Vertical, fill (hex or {r,g,b,a}), fillVariable (variable name — binds directly), cornerRadius, bindings:[{field,variableName}], text, fontSize, fontFamily, fontStyle, fontColor, componentId, children:[...]}. Use this instead of create_frame/create_text loops — 100 nodes in one call rather than 100.",
+  {
+    parentId: z.string().optional().describe("Parent node to append into (defaults to current page)"),
+    spec: z.any().optional().describe("A single root spec object"),
+    specs: z.array(z.any()).optional().describe("Several root specs appended in order"),
+  },
+  async ({ parentId, spec, specs }: any) => {
+    try {
+      const result = await sendCommandToFigma("create_tree", { parentId, spec, specs });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating tree: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Bind many variables at once
+server.tool(
+  "bind_variables_batch",
+  "Bind many variables in one call. bindings: [{nodeId, variableName, field}] where field defaults to 'fill' and also accepts 'stroke', 'cornerRadius', 'itemSpacing', 'paddingLeft', 'fontSize', etc.",
+  {
+    bindings: z.array(z.object({
+      nodeId: z.string(),
+      variableName: z.string(),
+      field: z.string().optional(),
+    })).describe("List of bindings to apply"),
+  },
+  async ({ bindings }: any) => {
+    try {
+      const result = await sendCommandToFigma("bind_variables_batch", { bindings });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error binding variables: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Set many properties at once
+server.tool(
+  "set_props_batch",
+  "Set properties on many nodes in one call: [{nodeId, name, fill, cornerRadius, opacity, width, height, itemSpacing, padding*, layoutSizing*, text, fontFamily, fontStyle, fontSize}]. Replaces repeated set_font / set_corner_radius / resize_node calls.",
+  {
+    items: z.array(z.any()).describe("List of {nodeId, ...props} updates"),
+  },
+  async ({ items }: any) => {
+    try {
+      const result = await sendCommandToFigma("set_props_batch", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error setting props: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Lean structural read
+server.tool(
+  "get_node_tree",
+  "Lean structural read of a node: ids, names, types, sizes only — no paints or full text. Use instead of get_node_info when you just need the structure; get_node_info can return hundreds of KB on a busy page.",
+  {
+    nodeId: z.string().describe("Node to read"),
+    maxDepth: z.number().optional().describe("How deep to walk (default 3)"),
+  },
+  async ({ nodeId, maxDepth }: any) => {
+    try {
+      const result = await sendCommandToFigma("get_node_tree", { nodeId, maxDepth });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error reading node tree: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Component search
+server.tool(
+  "find_components",
+  "Search local components across the whole file by name substring. Returns id, name and key — use the id with create_component_instance or create_tree's INSTANCE type.",
+  {
+    query: z.string().describe("Case-insensitive substring to match against component names"),
+    limit: z.number().optional().describe("Max results (default 50)"),
+  },
+  async ({ query, limit }: any) => {
+    try {
+      const result = await sendCommandToFigma("find_components", { query, limit });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error finding components: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Bind a variable to a non-colour property (radius, spacing, font size…)
+server.tool(
+  "bind_variable_to_property",
+  "Bind a local variable to a node property that is not a fill/stroke colour — e.g. cornerRadius, topLeftRadius, itemSpacing, paddingLeft/Right/Top/Bottom, width, height, fontSize, fontWeight, lineHeight, letterSpacing. Use bind_variable_to_fill/stroke for colours.",
+  {
+    nodeId: z.string().describe("The ID of the node to bind the variable to"),
+    variableName: z.string().describe("Exact full name of the local variable (from get_local_variables)"),
+    field: z.string().describe("The bindable property name, e.g. cornerRadius, itemSpacing, paddingLeft, fontSize"),
+  },
+  async ({ nodeId, variableName, field }: any) => {
+    try {
+      const result = await sendCommandToFigma("bind_variable_to_property", { nodeId, variableName, field });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error binding variable to property: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Get Local Variables (read-only)
+server.tool(
+  "get_local_variables",
+  "Read local variable collections, their modes, and each variable's per-mode value. Each value is reported as ALIAS (bound to another variable) or RAW (hard-coded), with a per-mode tally — use this to audit whether a theme mode is properly aliased.",
+  {
+    collectionName: z.string().optional().describe("Only return the collection with this exact name"),
+    summaryOnly: z.boolean().optional().describe("Return only modes and the alias/raw tally, omitting the full variable list"),
+  },
+  async ({ collectionName, summaryOnly }: any) => {
+    try {
+      const result = await sendCommandToFigma("get_local_variables", { collectionName, summaryOnly });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting local variables: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
 // ===== Library API Tools =====
 
 // Get Library Collections
@@ -3416,6 +3614,15 @@ type FigmaCommand =
   | "switch_page"
   | "get_pages"
   | "set_gradient_fill"
+  | "get_local_variables"
+  | "create_tree"
+  | "reparent_node"
+  | "combine_as_variants"
+  | "bind_variables_batch"
+  | "set_props_batch"
+  | "get_node_tree"
+  | "find_components"
+  | "bind_variable_to_property"
   | "get_library_collections"
   | "get_library_components"
   | "import_component_by_key"

@@ -28,9 +28,13 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.13.1",
-    "uuid": "latest",
-    "ws": "latest",
-    "zod": "3.22.4"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "uuid": "^14.0.1",
+    "ws": "^8.21.1",
+    "zod": "^3.25.76"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.12",
+    "esbuild": "^0.28.1"
   }
 }
