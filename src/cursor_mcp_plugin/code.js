@@ -2,7 +2,7 @@
 // It handles Figma API commands
 
 // Plugin version — used by MCP to verify plugin is up-to-date
-const PLUGIN_VERSION = "1.11.0-absolute";
+const PLUGIN_VERSION = "1.11.1-reactions";
 
 // Plugin state
 const state = {
@@ -5186,14 +5186,20 @@ async function setReactions(params) {
         if (a.overlayRelativePosition) action.overlayRelativePosition = a.overlayRelativePosition;
         if (a.preserveScrollPosition !== undefined) action.preserveScrollPosition = a.preserveScrollPosition;
         if (a.destinationId === null && a.navigation === "CLOSE") action.destinationId = null;
-        if (a.transition !== undefined) {
-          action.transition = a.transition === null ? null : {
-            type: a.transition.type || "DISSOLVE",
-            easing: a.transition.easing || { type: "EASE_IN_AND_OUT" },
-            duration: a.transition.duration !== undefined ? a.transition.duration : 0.3
-          };
-        } else {
-          action.transition = null;
+        // CLOSE / BACK / URL actions reject a transition key outright
+        if (action.type === "NODE") {
+          if (a.transition) {
+            action.transition = {
+              type: a.transition.type || "DISSOLVE",
+              easing: a.transition.easing || { type: "EASE_IN_AND_OUT" },
+              duration: a.transition.duration !== undefined ? a.transition.duration : 0.3
+            };
+            // MOVE_IN / MOVE_OUT / PUSH / SLIDE_* require both of these
+            if (a.transition.direction) action.transition.direction = a.transition.direction;
+            if (a.transition.matchLayers !== undefined) action.transition.matchLayers = a.transition.matchLayers;
+          } else {
+            action.transition = null;
+          }
         }
         if (a.url) action.url = a.url;
         return action;
