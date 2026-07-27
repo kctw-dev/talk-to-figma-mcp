@@ -38,9 +38,16 @@ Plugin sandbox 裡同步建 300 個節點很平常，慢的是 MCP → WebSocket
 | `find_components` | 用名字搜元件 | 取代「撈整頁 330KB 再 grep」 |
 | `reparent_node` | 真的換父層 | `move_node` 只改座標，在 auto-layout 裡無效 |
 | `combine_as_variants` | 把多個 COMPONENT 合成變體集 | — |
+| `swap_instance` | 換掉 instance 背後的主元件（巢狀 instance 也吃）| 27 張卡各自換圖示，不用 detach |
+| `create_svg` | 用 SVG 原始碼建真的向量 | plugin API 沒有畫路徑的方法，設計系統缺圖示時唯一的補法 |
 
 `create_tree` 的 spec 支援 `fillVariable`（建立當下就綁 variable）、
-`bindings: [{field, variableName}]`、`componentId`(INSTANCE)、`stroke`、`effects`。
+`bindings: [{field, variableName}]`、`componentId`(INSTANCE)、`stroke`、`effects`，
+以及 `{type: "SVG", svg: "<svg…>"}` 直接放向量。
+
+`set_props_batch` 除了排版屬性，另外吃 `swapComponentId`（等同 `swap_instance`）、
+`clipsContent`、`visible`、`layoutPositioning`、`constraints`、`x` / `y`——
+這些刻意掛在既有指令底下，改 plugin 後**只要重跑 plugin，不用重啟 Claude Code**。
 
 ### Variables 讀寫
 
@@ -184,6 +191,7 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `create_variables` | Variable Collection |
 | `create_tree` | **一份巢狀 JSON 建整棵子樹**（批次）|
 | `combine_as_variants` | 多個 COMPONENT 合成變體集 |
+| `create_svg` | **用 SVG 原始碼建真向量**（唯一能畫路徑的方法）|
 
 ### 修改
 | 工具 | 說明 |
@@ -217,6 +225,7 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `bind_variables_batch` | **一次綁多個 variable**（批次）|
 | `bind_variable_to_property` | 綁 variable 到非顏色屬性（圓角/間距/字級…）|
 | `reparent_node` | 換父層（`move_node` 只改座標）|
+| `swap_instance` | **換 instance 的主元件**（巢狀 instance 也吃，不用 detach）|
 
 ### 頁面管理
 | 工具 | 說明 |
@@ -239,11 +248,11 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 
 | 功能 | 狀態 | 說明 |
 |------|------|------|
-| Pen tool | ❌ 不支援 | 無法畫自定義形狀 |
+| Pen tool | ⚠️ 用 SVG 代替 | 沒有畫路徑的 API，改用 `create_svg` 餵 SVG 原始碼 |
 | Boolean 運算 | ❌ 不支援 | 無 Union/Subtract |
 | Mask | ❌ 不支援 | 無法建遮罩 |
 | Grid/Guide | ❌ 不支援 | 無法設定網格線 |
-| 匯入 SVG 檔案 | ❌ 不支援 | 無法直接匯入 SVG |
+| 匯入 SVG 檔案 | ✅ 已支援 | `create_svg` / `create_tree` 的 `type: "SVG"`（`figma.createNodeFromSvg`）|
 
 ### Figma Plugin Sandbox 的坑（實作時務必知道）
 
@@ -258,6 +267,12 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `set_image_fill` 回 `Failed to fetch` | 來源站沒有 CORS 標頭。起一個帶 `Access-Control-Allow-Origin: *` 的本機靜態伺服器餵圖即可（`figma.createImage()` 會把位元組**內嵌進檔案**，貼完就能關）|
 | `code.js` 語法錯誤 | 跑在 sandbox，不支援 arrow function / ternary spread |
 | 改完沒生效 | 每次改都 bump `PLUGIN_VERSION`，用 `get_plugin_version` 確認跑的是新 code |
+| spec 只給 `width` 沒給 `height`，尺寸整個沒套用 | `resize()` 兩軸都要；缺的那軸現在會用節點現值補上（v1.11.0 已修）|
+| 沒給尺寸的 frame 變成 100×100 撐出空白 | Figma 建 frame 的預設值。auto-layout 裡請設 `layoutSizing*: HUG` |
+| `create_tree` 的 `x`/`y` 沒作用，新元件全疊在 (0,0) 壓到版面 | 只在非 auto-layout 父層才有意義，v1.11.0 起會套用 |
+| `overlayPositionType` 設不了（`no setter for property`）| Figma API 唯讀。抽屜這種要貼齊邊緣的，改做成獨立畫面 + `NAVIGATE`，不要用 OVERLAY |
+| `set_reactions` 寫進去但 `action` 是空的 | 舊版只吃 `actions` 陣列；現在 `action`（單數）也收，並帶 `overlayRelativePosition` |
+| reaction 的 `MOVE_IN` / `SLIDE_IN` 被 Figma 打回 | 這兩種 transition 必須同時給 `direction` 與 `matchLayers` |
 
 > 動到 `code.js` → Figma 重跑 plugin 即可；動到 `server.ts` → 還要重啟 Claude Code。
 

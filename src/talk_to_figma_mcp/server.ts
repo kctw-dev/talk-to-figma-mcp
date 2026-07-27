@@ -3001,6 +3001,51 @@ server.tool(
   }
 );
 
+// Author real vector geometry from SVG source
+server.tool(
+  "create_svg",
+  "Create nodes from SVG source (figma.createNodeFromSvg). The only way to author real path/vector geometry — use it for icons the design system is missing. create_tree also accepts {type:'SVG', svg:'<svg…>'} spec nodes.",
+  {
+    items: z.array(z.object({
+      svg: z.string().describe("Full <svg>…</svg> source"),
+      name: z.string().optional(),
+      parentId: z.string().optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      x: z.number().optional(),
+      y: z.number().optional(),
+    })).describe("SVGs to create"),
+  },
+  async ({ items }: any) => {
+    try {
+      const result = await sendCommandToFigma("create_svg", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating SVG: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+// Swap the main component behind one or more instances
+server.tool(
+  "swap_instance",
+  "Point one or more INSTANCE nodes at a different main component. Works on nested instances inside another instance (it lands as an override), so you can give every row of a shared component its own icon without detaching.",
+  {
+    items: z.array(z.object({
+      nodeId: z.string().describe("INSTANCE node id (nested ids like 'I123:4;56:7' work)"),
+      componentId: z.string().describe("COMPONENT (or COMPONENT_SET — uses its default variant) to swap in"),
+    })).describe("Instances to swap"),
+  },
+  async ({ items }: any) => {
+    try {
+      const result = await sendCommandToFigma("swap_instance", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error swapping instance: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
 // Build a whole subtree in one round trip
 server.tool(
   "create_tree",
@@ -3618,6 +3663,8 @@ type FigmaCommand =
   | "create_tree"
   | "reparent_node"
   | "combine_as_variants"
+  | "swap_instance"
+  | "create_svg"
   | "bind_variables_batch"
   | "set_props_batch"
   | "get_node_tree"

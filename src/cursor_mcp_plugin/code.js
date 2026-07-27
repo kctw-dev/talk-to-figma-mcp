@@ -2,7 +2,7 @@
 // It handles Figma API commands
 
 // Plugin version — used by MCP to verify plugin is up-to-date
-const PLUGIN_VERSION = "1.7.0-reparent";
+const PLUGIN_VERSION = "1.11.0-absolute";
 
 // Plugin state
 const state = {
@@ -492,6 +492,59 @@ async function handleCommand(command, params) {
         return { error: "combineAsVariants failed: " + e.message };
       }
     }
+    case "create_svg": {
+      // the plugin API has no path/vector builder, so SVG source is the only
+      // way to author real icon geometry from a command
+      var svgItems = params.items || [{ svg: params.svg, name: params.name, x: params.x, y: params.y, parentId: params.parentId }];
+      var svgMade = [];
+      var svgFailed = [];
+      for (var gi = 0; gi < svgItems.length; gi++) {
+        var gItem = svgItems[gi];
+        try {
+          var gNode = figma.createNodeFromSvg(gItem.svg);
+          if (gItem.name) gNode.name = gItem.name;
+          var gParent = gItem.parentId ? await figma.getNodeByIdAsync(gItem.parentId) : figma.currentPage;
+          if (!gParent) throw new Error("parent not found: " + gItem.parentId);
+          gParent.appendChild(gNode);
+          if (gItem.width !== undefined || gItem.height !== undefined) {
+            gNode.resize(
+              gItem.width !== undefined ? gItem.width : gNode.width,
+              gItem.height !== undefined ? gItem.height : gNode.height
+            );
+          }
+          if (gItem.x !== undefined) gNode.x = gItem.x;
+          if (gItem.y !== undefined) gNode.y = gItem.y;
+          svgMade.push({ id: gNode.id, name: gNode.name, width: gNode.width, height: gNode.height });
+        } catch (e) {
+          svgFailed.push({ name: gItem.name, error: e.message });
+        }
+      }
+      return { success: svgFailed.length === 0, created: svgMade.length, failed: svgFailed.length, nodes: svgMade, failures: svgFailed };
+    }
+    case "swap_instance": {
+      // swap the main component of one or more instances (works on nested
+      // instances too, where it lands as an override on the outer instance)
+      var swItems = params.items || [{ nodeId: params.nodeId, componentId: params.componentId }];
+      var swResults = [];
+      var swFailed = [];
+      for (var si = 0; si < swItems.length; si++) {
+        var swItem = swItems[si];
+        try {
+          var swInst = await figma.getNodeByIdAsync(swItem.nodeId);
+          if (!swInst) throw new Error("instance not found");
+          if (swInst.type !== "INSTANCE") throw new Error("not an INSTANCE (" + swInst.type + ")");
+          var swComp = await figma.getNodeByIdAsync(swItem.componentId);
+          if (!swComp) throw new Error("component not found: " + swItem.componentId);
+          if (swComp.type === "COMPONENT_SET") swComp = swComp.defaultVariant;
+          if (!swComp || swComp.type !== "COMPONENT") throw new Error("target is not a COMPONENT");
+          swInst.swapComponent(swComp);
+          swResults.push({ nodeId: swItem.nodeId, componentId: swComp.id, name: swComp.name });
+        } catch (e) {
+          swFailed.push({ nodeId: swItem.nodeId, error: e.message });
+        }
+      }
+      return { success: swFailed.length === 0, swapped: swResults.length, failed: swFailed.length, results: swResults, failures: swFailed };
+    }
     case "bind_variables_batch":
       return await bindVariablesBatch(params);
     case "set_props_batch":
@@ -960,7 +1013,10 @@ async function buildSpecNode(spec, parent, warnings) {
   var node = null;
   var type = spec.type || "FRAME";
 
-  if (type === "TEXT") {
+  if (type === "SVG") {
+    // real icon geometry — the plugin API has no path builder, SVG is the way in
+    node = figma.createNodeFromSvg(spec.svg);
+  } else if (type === "TEXT") {
     var family = spec.fontFamily || "Noto Sans TC";
     var style = spec.fontStyle || "Regular";
     try {
@@ -998,12 +1054,24 @@ async function buildSpecNode(spec, parent, warnings) {
 
   if (type !== "TEXT") {
     applyLayoutSpec(node, spec);
-    if (spec.width !== undefined && spec.height !== undefined && "resize" in node) {
-      node.resize(spec.width, spec.height);
+    // resize() needs both axes; a spec that names only one axis used to be
+    // silently ignored, so fill the missing one from the node's current size
+    if ((spec.width !== undefined || spec.height !== undefined) && "resize" in node) {
+      node.resize(
+        spec.width !== undefined ? spec.width : node.width,
+        spec.height !== undefined ? spec.height : node.height
+      );
     }
   }
 
   await applyCommonSpec(node, spec, warnings);
+
+  // x/y only mean anything outside an auto-layout parent — but there they must
+  // be honoured, or every page-level create lands on top of whatever is at 0,0
+  if (!parent.layoutMode || parent.layoutMode === "NONE") {
+    if (spec.x !== undefined) node.x = spec.x;
+    if (spec.y !== undefined) node.y = spec.y;
+  }
 
   if (spec.children && node.type === "FRAME") {
     for (var i = 0; i < spec.children.length; i++) {
@@ -1107,6 +1175,15 @@ async function setPropsBatch(params) {
     if (!node) { failures.push({ nodeId: it.nodeId, error: "node not found" }); continue; }
     try {
       if (it.name) node.name = it.name;
+      if (it.swapComponentId) {
+        // same as the swap_instance command, exposed here so a whole row of
+        // icons can be swapped in the same batch as the rest of the props
+        if (node.type !== "INSTANCE") throw new Error("swapComponentId needs an INSTANCE, got " + node.type);
+        var swTarget = await figma.getNodeByIdAsync(it.swapComponentId);
+        if (swTarget && swTarget.type === "COMPONENT_SET") swTarget = swTarget.defaultVariant;
+        if (!swTarget || swTarget.type !== "COMPONENT") throw new Error("swap target is not a COMPONENT: " + it.swapComponentId);
+        node.swapComponent(swTarget);
+      }
       if (it.layoutMode) node.layoutMode = it.layoutMode;
       if (it.primaryAxisAlignItems) node.primaryAxisAlignItems = it.primaryAxisAlignItems;
       if (it.counterAxisAlignItems) node.counterAxisAlignItems = it.counterAxisAlignItems;
@@ -1120,7 +1197,34 @@ async function setPropsBatch(params) {
       if (it.fill) node.fills = [specToPaint(it.fill)];
       if (it.cornerRadius !== undefined && "cornerRadius" in node) node.cornerRadius = it.cornerRadius;
       if (it.opacity !== undefined) node.opacity = it.opacity;
-      if (it.width !== undefined && it.height !== undefined && "resize" in node) node.resize(it.width, it.height);
+      if (it.clipsContent !== undefined && "clipsContent" in node) node.clipsContent = it.clipsContent;
+      // absolute positioning inside an auto-layout parent (e.g. a centred overlay glyph)
+      if (it.layoutPositioning && "layoutPositioning" in node) node.layoutPositioning = it.layoutPositioning;
+      if (it.constraints && "constraints" in node) node.constraints = it.constraints;
+      if (it.x !== undefined) node.x = it.x;
+      if (it.y !== undefined) node.y = it.y;
+      if (it.visible !== undefined) node.visible = it.visible;
+      // prototype overlay settings live on the destination frame, not the reaction
+      if (it.overlayPositionType && "overlayPositionType" in node) node.overlayPositionType = it.overlayPositionType;
+      if (it.overlayBackgroundInteraction && "overlayBackgroundInteraction" in node) node.overlayBackgroundInteraction = it.overlayBackgroundInteraction;
+      if (it.overlayBackground !== undefined && "overlayBackground" in node) {
+        if (it.overlayBackground === null) {
+          node.overlayBackground = { type: "NONE" };
+        } else {
+          var obRaw = specHexToRgb(it.overlayBackground.color || it.overlayBackground);
+          node.overlayBackground = {
+            type: "SOLID_COLOR",
+            color: { r: obRaw.r, g: obRaw.g, b: obRaw.b, a: it.overlayBackground.alpha !== undefined ? it.overlayBackground.alpha : obRaw.a }
+          };
+        }
+      }
+      // resize() needs both axes — fill the missing one from the current size
+      if ((it.width !== undefined || it.height !== undefined) && "resize" in node) {
+        node.resize(
+          it.width !== undefined ? it.width : node.width,
+          it.height !== undefined ? it.height : node.height
+        );
+      }
       if (it.itemSpacing !== undefined) node.itemSpacing = it.itemSpacing;
       if (it.paddingLeft !== undefined) node.paddingLeft = it.paddingLeft;
       if (it.paddingRight !== undefined) node.paddingRight = it.paddingRight;
@@ -5071,11 +5175,17 @@ async function setReactions(params) {
       actions: []
     };
 
-    if (r.actions && Array.isArray(r.actions)) {
-      reaction.actions = r.actions.map(a => {
+    // callers naturally write a single `action` — accept it as well as `actions`
+    const rActions = (r.actions && Array.isArray(r.actions)) ? r.actions : (r.action ? [r.action] : null);
+
+    if (rActions) {
+      reaction.actions = rActions.map(a => {
         const action = { type: a.type || "NODE" };
         if (a.destinationId) action.destinationId = a.destinationId;
         if (a.navigation) action.navigation = a.navigation;
+        if (a.overlayRelativePosition) action.overlayRelativePosition = a.overlayRelativePosition;
+        if (a.preserveScrollPosition !== undefined) action.preserveScrollPosition = a.preserveScrollPosition;
+        if (a.destinationId === null && a.navigation === "CLOSE") action.destinationId = null;
         if (a.transition !== undefined) {
           action.transition = a.transition === null ? null : {
             type: a.transition.type || "DISSOLVE",

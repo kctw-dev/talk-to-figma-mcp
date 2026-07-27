@@ -2566,6 +2566,47 @@ server.tool(
   }
 );
 server.tool(
+  "create_svg",
+  "Create nodes from SVG source (figma.createNodeFromSvg). The only way to author real path/vector geometry \u2014 use it for icons the design system is missing. create_tree also accepts {type:'SVG', svg:'<svg\u2026>'} spec nodes.",
+  {
+    items: z.array(z.object({
+      svg: z.string().describe("Full <svg>\u2026</svg> source"),
+      name: z.string().optional(),
+      parentId: z.string().optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      x: z.number().optional(),
+      y: z.number().optional()
+    })).describe("SVGs to create")
+  },
+  async ({ items }) => {
+    try {
+      const result = await sendCommandToFigma("create_svg", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating SVG: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "swap_instance",
+  "Point one or more INSTANCE nodes at a different main component. Works on nested instances inside another instance (it lands as an override), so you can give every row of a shared component its own icon without detaching.",
+  {
+    items: z.array(z.object({
+      nodeId: z.string().describe("INSTANCE node id (nested ids like 'I123:4;56:7' work)"),
+      componentId: z.string().describe("COMPONENT (or COMPONENT_SET \u2014 uses its default variant) to swap in")
+    })).describe("Instances to swap")
+  },
+  async ({ items }) => {
+    try {
+      const result = await sendCommandToFigma("swap_instance", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error swapping instance: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
   "create_tree",
   "Build an entire node subtree from one nested spec in a single call. Each spec node: {type: FRAME|TEXT|INSTANCE|RECTANGLE, name, width, height, layoutMode, layoutWrap, itemSpacing, padding*, primaryAxisAlignItems, counterAxisAlignItems, layoutSizingHorizontal/Vertical, fill (hex or {r,g,b,a}), fillVariable (variable name \u2014 binds directly), cornerRadius, bindings:[{field,variableName}], text, fontSize, fontFamily, fontStyle, fontColor, componentId, children:[...]}. Use this instead of create_frame/create_text loops \u2014 100 nodes in one call rather than 100.",
   {
