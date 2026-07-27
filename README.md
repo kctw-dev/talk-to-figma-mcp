@@ -23,6 +23,39 @@
 | `set_gradient_fill` | 漸層填色 | ✅ |
 | `create_page` / `switch_page` / `get_pages` | 頁面管理 | ✅ |
 
+### 批次指令（2026-07 新增）
+
+實際重建一個約 350 節點的頁面時撞到的瓶頸：**不在 Figma，在來回次數**。
+Plugin sandbox 裡同步建 300 個節點很平常，慢的是 MCP → WebSocket → plugin
+每個指令一次來回。Upstream 也沒解這件事（只有 `set_multiple_text_contents` 是批次的）。
+
+| 工具 | 功能 | 效益 |
+|------|------|------|
+| `create_tree` | 一份巢狀 JSON 建整棵子樹 | 四張優惠券 28 次 → **1 次** |
+| `set_props_batch` | 一次改多節點的 fill / stroke / effects / layoutMode / 對齊 / 尺寸 / 間距 / 字型 | 50 個邊框 50 次 → **2 次** |
+| `bind_variables_batch` | 一次綁多個 variable | 60 次 → **2 次** |
+| `get_node_tree` | 精簡結構讀取（id/name/type/尺寸）| `get_node_info` 在忙的頁面會吐 900KB |
+| `find_components` | 用名字搜元件 | 取代「撈整頁 330KB 再 grep」 |
+| `reparent_node` | 真的換父層 | `move_node` 只改座標，在 auto-layout 裡無效 |
+| `combine_as_variants` | 把多個 COMPONENT 合成變體集 | — |
+
+`create_tree` 的 spec 支援 `fillVariable`（建立當下就綁 variable）、
+`bindings: [{field, variableName}]`、`componentId`(INSTANCE)、`stroke`、`effects`。
+
+### Variables 讀寫
+
+| 工具 | 功能 |
+|------|------|
+| `get_local_variables` | 讀本地 collection 的 modes 與每個 mode 的值，標成 `ALIAS`（附 `aliasOf`）/ `RAW` / `UNSET`，並附各 mode 的 alias/raw 統計 |
+| `bind_variable_to_property` | 綁非顏色屬性（cornerRadius / itemSpacing / padding* / fontSize…）|
+
+Upstream 對 variables 只有寫入（`create_variables`、`bind_variable_to_*`），
+沒有讀取窗口——但 `figma.variables` 全套 API 在 plugin sandbox 裡本來就有。
+
+**同時修掉**：`filterFigmaNode` 原本會 `delete boundVariables`（fill/stroke/gradient stop
+三處），且節點層級的 `boundVariables` 從未被複製，導致 `get_node_info` 看不出某個值
+是綁定 token 還是寫死的。已改為保留。
+
 ### 多 Agent 支援
 
 WebSocket Server 支援 **Correlation ID 定向路由**，多個 MCP Agent 可同時操作同一個 Figma 文件而不互相干擾。
@@ -135,6 +168,9 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `get_plugin_version` | Plugin 版本 |
 | `scan_nodes_by_types` | 依類型掃描 |
 | `scan_text_nodes` | 掃描文字節點 |
+| `get_node_tree` | 精簡結構讀取（id/name/type/尺寸，可設 maxDepth）|
+| `find_components` | 依名稱搜尋全檔元件 |
+| `get_local_variables` | 讀本地 variables（modes / 每 mode 值 / ALIAS 或 RAW）|
 
 ### 建立
 | 工具 | 說明 |
@@ -146,6 +182,8 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `create_component_instance` | Component Instance |
 | `create_connections` | 連接線 |
 | `create_variables` | Variable Collection |
+| `create_tree` | **一份巢狀 JSON 建整棵子樹**（批次）|
+| `combine_as_variants` | 多個 COMPONENT 合成變體集 |
 
 ### 修改
 | 工具 | 說明 |
@@ -175,6 +213,10 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `set_effects` | 陰影/模糊特效（DROP_SHADOW 等） |
 | `set_font` | 字體選擇 + 大小（fontFamily/fontStyle/fontSize） |
 | `set_gradient_fill` | 漸層填色（LINEAR/RADIAL/ANGULAR/DIAMOND） |
+| `set_props_batch` | **一次改多節點多屬性**（批次）|
+| `bind_variables_batch` | **一次綁多個 variable**（批次）|
+| `bind_variable_to_property` | 綁 variable 到非顏色屬性（圓角/間距/字級…）|
+| `reparent_node` | 換父層（`move_node` 只改座標）|
 
 ### 頁面管理
 | 工具 | 說明 |
@@ -202,6 +244,22 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | Mask | ❌ 不支援 | 無法建遮罩 |
 | Grid/Guide | ❌ 不支援 | 無法設定網格線 |
 | 匯入 SVG 檔案 | ❌ 不支援 | 無法直接匯入 SVG |
+
+### Figma Plugin Sandbox 的坑（實作時務必知道）
+
+| 現象 | 原因 / 解法 |
+|------|------|
+| `create_tree` 建出空的預設 frame | spec 可能以字串送達，需先 `JSON.parse`（v1.4.1 已修）|
+| `layoutSizingHorizontal: FILL` 建立時失敗 | 必須先 `appendChild` 到父層再設 |
+| `layoutWrap: WRAP` 設了沒作用 | 這個 plugin 上無效，要多欄請自己建 row frame |
+| 頁面層級 frame 設 HUG 沒反應 | HUG 只對 auto-layout 的子層有效；根 frame 需 `layoutSizingVertical: HUG` 且本身有 auto-layout |
+| 設 `layoutMode` 後 frame 縮掉 | 會變成 hug，需一併設 `layoutSizing*: FIXED` + width/height |
+| `move_node` 移不出 auto-layout | 座標被排版接管，請用 `reparent_node` |
+| `set_image_fill` 回 `Failed to fetch` | 來源站沒有 CORS 標頭。起一個帶 `Access-Control-Allow-Origin: *` 的本機靜態伺服器餵圖即可（`figma.createImage()` 會把位元組**內嵌進檔案**，貼完就能關）|
+| `code.js` 語法錯誤 | 跑在 sandbox，不支援 arrow function / ternary spread |
+| 改完沒生效 | 每次改都 bump `PLUGIN_VERSION`，用 `get_plugin_version` 確認跑的是新 code |
+
+> 動到 `code.js` → Figma 重跑 plugin 即可；動到 `server.ts` → 還要重啟 Claude Code。
 
 ## 開發
 
