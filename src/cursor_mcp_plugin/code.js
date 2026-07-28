@@ -2,7 +2,7 @@
 // It handles Figma API commands
 
 // Plugin version — used by MCP to verify plugin is up-to-date
-const PLUGIN_VERSION = "1.11.1-reactions";
+const PLUGIN_VERSION = "1.13.2-props-safe";
 
 // Plugin state
 const state = {
@@ -592,12 +592,32 @@ async function handleCommand(command, params) {
         return { error: `Node ${params.nodeId} is not an INSTANCE` };
       }
       const main = await node.getMainComponentAsync();
+      // property definitions live on the COMPONENT_SET, not on the variant —
+      // and get_node_info can't see them at all (it filters a JSON_REST_V1
+      // export, which doesn't carry them). Read the live node here instead.
+      // each read is fenced: a remote/library component can throw on parent or
+      // on the property getters, and one failure shouldn't lose the whole answer
+      function tryGet(fn) {
+        try { return fn(); } catch (e) { return { __error: String(e && e.message || e) }; }
+      }
+      var setNode = tryGet(function () {
+        return main && main.parent && main.parent.type === "COMPONENT_SET" ? main.parent : null;
+      });
+      if (setNode && setNode.__error) setNode = null;
       return {
         instanceId: node.id,
         instanceName: node.name,
-        componentKey: main ? main.key : null,
-        componentName: main ? main.name : null,
-        componentId: main ? main.id : null
+        componentKey: tryGet(function () { return main ? main.key : null; }),
+        componentName: tryGet(function () { return main ? main.name : null; }),
+        componentId: tryGet(function () { return main ? main.id : null; }),
+        componentSetId: setNode ? setNode.id : null,
+        componentSetName: setNode ? setNode.name : null,
+        componentProperties: tryGet(function () { return node.componentProperties || null; }),
+        componentPropertyDefinitions: tryGet(function () {
+          if (setNode && setNode.componentPropertyDefinitions) return setNode.componentPropertyDefinitions;
+          if (main && main.componentPropertyDefinitions) return main.componentPropertyDefinitions;
+          return null;
+        })
       };
     }
     case "scan_instance_keys": {
@@ -1198,6 +1218,9 @@ async function setPropsBatch(params) {
       if (it.cornerRadius !== undefined && "cornerRadius" in node) node.cornerRadius = it.cornerRadius;
       if (it.opacity !== undefined) node.opacity = it.opacity;
       if (it.clipsContent !== undefined && "clipsContent" in node) node.clipsContent = it.clipsContent;
+      // prototype scrolling: rails scroll sideways, nav bars stay put
+      if (it.overflowDirection && "overflowDirection" in node) node.overflowDirection = it.overflowDirection;
+      if (it.scrollBehavior && "scrollBehavior" in node) node.scrollBehavior = it.scrollBehavior;
       // absolute positioning inside an auto-layout parent (e.g. a centred overlay glyph)
       if (it.layoutPositioning && "layoutPositioning" in node) node.layoutPositioning = it.layoutPositioning;
       if (it.constraints && "constraints" in node) node.constraints = it.constraints;
@@ -1423,6 +1446,18 @@ function filterFigmaNode(node) {
   // can tell a real token from a hard-coded value
   if (node.boundVariables) {
     filtered.boundVariables = node.boundVariables;
+  }
+
+  // component properties — the only way to tell a real toggle (BOOLEAN prop)
+  // from a layer you have to hide by hand. Variant names don't show these.
+  if (node.componentPropertyDefinitions) {
+    filtered.componentPropertyDefinitions = node.componentPropertyDefinitions;
+  }
+  if (node.componentProperties) {
+    filtered.componentProperties = node.componentProperties;
+  }
+  if (node.componentPropertyReferences) {
+    filtered.componentPropertyReferences = node.componentPropertyReferences;
   }
 
   if (node.fills && node.fills.length > 0) {

@@ -267,6 +267,11 @@ claude mcp add -e MCP_CHANNEL=my-project -- talk-to-figma-mcp node /path/to/talk
 | `set_image_fill` 回 `Failed to fetch` | 來源站沒有 CORS 標頭。起一個帶 `Access-Control-Allow-Origin: *` 的本機靜態伺服器餵圖即可（`figma.createImage()` 會把位元組**內嵌進檔案**，貼完就能關）|
 | `code.js` 語法錯誤 | 跑在 sandbox，不支援 arrow function / ternary spread |
 | 改完沒生效 | 每次改都 bump `PLUGIN_VERSION`，用 `get_plugin_version` 確認跑的是新 code |
+| `get_node_info` 看不到元件屬性（`componentProperties` / `componentPropertyDefinitions`）| 🔴 它不是讀即時節點，是 `exportAsync({format:"JSON_REST_V1"})` 之後再過濾，**REST 匯出格式根本不帶這些欄位**。要讀屬性得用 `figma.getNodeByIdAsync` 拿到的活節點（`get_instance_info` 已改成這樣）|
+| `swap_instance` 之後尺寸忽大忽小 | 換主元件**不會清掉 instance 既有的尺寸覆寫**。原本有覆寫的維持舊尺寸、沒覆寫的吃新元件原生尺寸，同一排就會交替。swap 後要**逐一重設寬高**，不能只檢查內容 |
+| `swap_instance` 之後文字全變回預設 | 換到結構不同的元件，**文字覆寫對應不上就會整批丟失**。換完要重填內容 |
+| 查變體查不到屬性定義 | `componentPropertyDefinitions` 掛在 **COMPONENT_SET** 上，不在個別變體 COMPONENT 上。要往 `main.parent` 取 |
+| 用元件名搜不到東西就以為沒有 | 變體成員的名字是 `屬性=值, 屬性=值`，**不含元件集的名字**。用中文名搜一定漏，要改用屬性結構掃或直接列整個 page |
 | spec 只給 `width` 沒給 `height`，尺寸整個沒套用 | `resize()` 兩軸都要；缺的那軸現在會用節點現值補上（v1.11.0 已修）|
 | 沒給尺寸的 frame 變成 100×100 撐出空白 | Figma 建 frame 的預設值。auto-layout 裡請設 `layoutSizing*: HUG` |
 | `create_tree` 的 `x`/`y` 沒作用，新元件全疊在 (0,0) 壓到版面 | 只在非 auto-layout 父層才有意義，v1.11.0 起會套用 |
