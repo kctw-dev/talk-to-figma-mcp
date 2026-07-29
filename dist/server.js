@@ -2530,6 +2530,227 @@ server.tool(
   }
 );
 server.tool(
+  "reparent_node",
+  "Move a node into a different parent. Unlike move_node (which only sets x/y and is ignored inside auto-layout), this actually re-parents. Optional index to insert at a position, and x/y for non-auto-layout parents.",
+  {
+    nodeId: z.string().describe("Node to move"),
+    parentId: z.string().optional().describe("New parent (defaults to current page)"),
+    index: z.number().optional().describe("Insert position among the parent's children"),
+    x: z.number().optional(),
+    y: z.number().optional()
+  },
+  async ({ nodeId, parentId, index, x, y }) => {
+    try {
+      const result = await sendCommandToFigma("reparent_node", { nodeId, parentId, index, x, y });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error reparenting: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "combine_as_variants",
+  "Combine several COMPONENT nodes into a single Component Set (variants). Name each component 'Prop=Value, Prop=Value' beforehand so Figma derives the variant properties.",
+  {
+    nodeIds: z.array(z.string()).describe("COMPONENT node ids to combine"),
+    parentId: z.string().optional().describe("Where to put the resulting set (defaults to current page)"),
+    name: z.string().optional().describe("Name for the component set")
+  },
+  async ({ nodeIds, parentId, name }) => {
+    try {
+      const result = await sendCommandToFigma("combine_as_variants", { nodeIds, parentId, name });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error combining variants: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "create_svg",
+  "Create nodes from SVG source (figma.createNodeFromSvg). The only way to author real path/vector geometry \u2014 use it for icons the design system is missing. create_tree also accepts {type:'SVG', svg:'<svg\u2026>'} spec nodes.",
+  {
+    items: z.array(z.object({
+      svg: z.string().describe("Full <svg>\u2026</svg> source"),
+      name: z.string().optional(),
+      parentId: z.string().optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      x: z.number().optional(),
+      y: z.number().optional()
+    })).describe("SVGs to create")
+  },
+  async ({ items }) => {
+    try {
+      const result = await sendCommandToFigma("create_svg", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating SVG: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "swap_instance",
+  "Point one or more INSTANCE nodes at a different main component. Works on nested instances inside another instance (it lands as an override), so you can give every row of a shared component its own icon without detaching.",
+  {
+    items: z.array(z.object({
+      nodeId: z.string().describe("INSTANCE node id (nested ids like 'I123:4;56:7' work)"),
+      componentId: z.string().describe("COMPONENT (or COMPONENT_SET \u2014 uses its default variant) to swap in")
+    })).describe("Instances to swap")
+  },
+  async ({ items }) => {
+    try {
+      const result = await sendCommandToFigma("swap_instance", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error swapping instance: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "create_tree",
+  "Build an entire node subtree from one nested spec in a single call. Each spec node: {type: FRAME|TEXT|INSTANCE|RECTANGLE, name, width, height, layoutMode, layoutWrap, itemSpacing, padding*, primaryAxisAlignItems, counterAxisAlignItems, layoutSizingHorizontal/Vertical, fill (hex or {r,g,b,a}), fillVariable (variable name \u2014 binds directly), cornerRadius, bindings:[{field,variableName}], text, fontSize, fontFamily, fontStyle, fontColor, componentId, children:[...]}. Use this instead of create_frame/create_text loops \u2014 100 nodes in one call rather than 100.",
+  {
+    parentId: z.string().optional().describe("Parent node to append into (defaults to current page)"),
+    spec: z.any().optional().describe("A single root spec object"),
+    specs: z.array(z.any()).optional().describe("Several root specs appended in order")
+  },
+  async ({ parentId, spec, specs }) => {
+    try {
+      const result = await sendCommandToFigma("create_tree", { parentId, spec, specs });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating tree: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "bind_variables_batch",
+  "Bind many variables in one call. bindings: [{nodeId, variableName, field}] where field defaults to 'fill' and also accepts 'stroke', 'cornerRadius', 'itemSpacing', 'paddingLeft', 'fontSize', etc.",
+  {
+    bindings: z.array(z.object({
+      nodeId: z.string(),
+      variableName: z.string(),
+      field: z.string().optional()
+    })).describe("List of bindings to apply")
+  },
+  async ({ bindings }) => {
+    try {
+      const result = await sendCommandToFigma("bind_variables_batch", { bindings });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error binding variables: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "set_props_batch",
+  "Set properties on many nodes in one call: [{nodeId, name, fill, cornerRadius, opacity, width, height, itemSpacing, padding*, layoutSizing*, text, fontFamily, fontStyle, fontSize}]. Replaces repeated set_font / set_corner_radius / resize_node calls.",
+  {
+    items: z.array(z.any()).describe("List of {nodeId, ...props} updates")
+  },
+  async ({ items }) => {
+    try {
+      const result = await sendCommandToFigma("set_props_batch", { items });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error setting props: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "get_node_tree",
+  "Lean structural read of a node: ids, names, types, sizes only \u2014 no paints or full text. Use instead of get_node_info when you just need the structure; get_node_info can return hundreds of KB on a busy page.",
+  {
+    nodeId: z.string().describe("Node to read"),
+    maxDepth: z.number().optional().describe("How deep to walk (default 3)")
+  },
+  async ({ nodeId, maxDepth }) => {
+    try {
+      const result = await sendCommandToFigma("get_node_tree", { nodeId, maxDepth });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error reading node tree: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "find_components",
+  "Search local components across the whole file by name substring. Returns id, name and key \u2014 use the id with create_component_instance or create_tree's INSTANCE type.",
+  {
+    query: z.string().describe("Case-insensitive substring to match against component names"),
+    limit: z.number().optional().describe("Max results (default 50)")
+  },
+  async ({ query, limit }) => {
+    try {
+      const result = await sendCommandToFigma("find_components", { query, limit });
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error finding components: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+server.tool(
+  "bind_variable_to_property",
+  "Bind a local variable to a node property that is not a fill/stroke colour \u2014 e.g. cornerRadius, topLeftRadius, itemSpacing, paddingLeft/Right/Top/Bottom, width, height, fontSize, fontWeight, lineHeight, letterSpacing. Use bind_variable_to_fill/stroke for colours.",
+  {
+    nodeId: z.string().describe("The ID of the node to bind the variable to"),
+    variableName: z.string().describe("Exact full name of the local variable (from get_local_variables)"),
+    field: z.string().describe("The bindable property name, e.g. cornerRadius, itemSpacing, paddingLeft, fontSize")
+  },
+  async ({ nodeId, variableName, field }) => {
+    try {
+      const result = await sendCommandToFigma("bind_variable_to_property", { nodeId, variableName, field });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error binding variable to property: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
+  "get_local_variables",
+  "Read local variable collections, their modes, and each variable's per-mode value. Each value is reported as ALIAS (bound to another variable) or RAW (hard-coded), with a per-mode tally \u2014 use this to audit whether a theme mode is properly aliased.",
+  {
+    collectionName: z.string().optional().describe("Only return the collection with this exact name"),
+    summaryOnly: z.boolean().optional().describe("Return only modes and the alias/raw tally, omitting the full variable list")
+  },
+  async ({ collectionName, summaryOnly }) => {
+    try {
+      const result = await sendCommandToFigma("get_local_variables", { collectionName, summaryOnly });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting local variables: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+server.tool(
   "get_library_collections",
   "List all available library variable collections (from enabled team/community libraries)",
   {},
